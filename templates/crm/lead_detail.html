@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ lead.Nombre }} — CRM Aurora Bakers</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <style>
+    :root {
+      --aurora: #d4845a; --aurora-dark: #b86c42;
+      --bg: #0f0e0c; --surface: #1a1916; --surface2: #242220;
+      --border: #2e2c28; --text: #e8e4dc; --muted: #7a776e;
+    }
+    body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; margin: 0; }
+    .sidebar { width: 220px; min-height: 100vh; background: var(--surface); border-right: 1px solid var(--border);
+               position: fixed; top: 0; left: 0; padding: 24px 0; }
+    .sidebar-brand { padding: 0 20px 24px; border-bottom: 1px solid var(--border); }
+    .sidebar-brand span { font-size: 13px; color: var(--muted); }
+    .sidebar-brand strong { display: block; font-size: 17px; }
+    .nav-link { display: flex; align-items: center; gap: 10px; padding: 10px 20px; font-size: 14px; color: var(--muted); }
+    .nav-link:hover, .nav-link.active { background: var(--surface2); color: var(--text); }
+    .main { margin-left: 220px; padding: 32px; max-width: 960px; }
+
+    .back-link { color: var(--muted); font-size: 13px; margin-bottom: 20px; display: inline-flex; align-items: center; gap: 6px; }
+    .back-link:hover { color: var(--text); }
+
+    .lead-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
+    .lead-title { font-size: 26px; font-weight: 700; }
+    .lead-meta { color: var(--muted); font-size: 14px; margin-top: 4px; }
+
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+    .card h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 16px; }
+
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .info-item label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; display: block; margin-bottom: 4px; }
+    .info-item span { font-size: 14px; color: var(--text); }
+
+    .badge-estado { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .badge-DESCUBIERTO  { background: #8b8b8b22; color: #aaa; }
+    .badge-CONTACTADO   { background: #6b9fd422; color: #6b9fd4; }
+    .badge-RESPONDIO    { background: #7dbf8e22; color: #7dbf8e; }
+    .badge-INTERESADO   { background: #d4a85a22; color: #d4a85a; }
+    .badge-PROPUESTA    { background: #d48a5a22; color: #d48a5a; }
+    .badge-CLIENTE      { background: #5ad47b22; color: #5ad47b; }
+    .badge-PERDIDO      { background: #d45a5a22; color: #d45a5a; }
+
+    /* Pipeline tracker */
+    .pipeline-track { display: flex; align-items: center; gap: 0; margin-bottom: 24px; overflow-x: auto; }
+    .pipeline-step { display: flex; align-items: center; }
+    .step-dot { width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--border);
+                background: var(--surface2); display: flex; align-items: center; justify-content: center;
+                font-size: 10px; color: var(--muted); white-space: nowrap; position: relative; flex-shrink: 0; }
+    .step-dot.done { background: var(--aurora); border-color: var(--aurora); color: white; }
+    .step-dot.current { background: var(--aurora); border-color: var(--aurora); box-shadow: 0 0 0 4px #d4845a33; color: white; }
+    .step-label { font-size: 10px; color: var(--muted); position: absolute; top: 36px; left: 50%; transform: translateX(-50%);
+                  white-space: nowrap; }
+    .step-current-label { color: var(--aurora); font-weight: 600; }
+    .step-line { flex: 1; height: 2px; background: var(--border); min-width: 30px; }
+    .step-line.done { background: var(--aurora); }
+
+    /* Interactions timeline */
+    .timeline { position: relative; padding-left: 24px; }
+    .timeline::before { content: ''; position: absolute; left: 7px; top: 0; bottom: 0;
+                         width: 2px; background: var(--border); }
+    .tl-item { position: relative; margin-bottom: 20px; }
+    .tl-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--aurora);
+               position: absolute; left: -20px; top: 3px; }
+    .tl-content { background: var(--surface2); border-radius: 10px; padding: 12px 14px; }
+    .tl-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .tl-type { font-size: 12px; font-weight: 600; color: var(--text); }
+    .tl-date { font-size: 11px; color: var(--muted); }
+    .tl-canal { font-size: 11px; background: var(--surface); padding: 1px 8px; border-radius: 10px;
+                color: var(--muted); margin-left: 6px; }
+    .tl-body { font-size: 13px; color: var(--muted); line-height: 1.5; }
+    .tl-result { font-size: 11px; margin-top: 6px; }
+    .result-ok       { color: #5ad47b; }
+    .result-error    { color: #d45a5a; }
+    .result-pendiente { color: #d4a85a; }
+
+    /* Action panel */
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn-aurora { background: var(--aurora); color: #fff; border: none; border-radius: 8px;
+                  padding: 9px 18px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn-aurora:hover { background: var(--aurora-dark); }
+    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border);
+                 border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
+    .btn-ghost:hover { border-color: var(--aurora); color: var(--aurora); }
+    .btn-danger { background: transparent; color: #d45a5a; border: 1px solid #d45a5a44;
+                  border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
+    .btn-danger:hover { background: #d45a5a22; }
+
+    select.select-dark { background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+                         border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+
+    .score-circle { width: 56px; height: 56px; border-radius: 50%; border: 3px solid var(--aurora);
+                    display: flex; align-items: center; justify-content: center; flex-direction: column; }
+    .score-circle .num { font-size: 18px; font-weight: 700; color: var(--aurora); line-height: 1; }
+    .score-circle .lbl { font-size: 9px; color: var(--muted); text-transform: uppercase; }
+
+    .flash { background: #5ad47b22; border: 1px solid #5ad47b44; color: #5ad47b;
+              border-radius: 8px; padding: 10px 16px; margin-bottom: 16px; font-size: 13px; }
+    .flash-err { background: #d45a5a22; border-color: #d45a5a44; color: #d45a5a; }
+  </style>
+</head>
+<body>
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <span>Aurora Bakers</span>
+    <strong>CRM</strong>
+  </div>
+  <nav style="margin-top:8px;">
+    <a href="/crm/" class="nav-link">🏠 Dashboard</a>
+    <a href="/crm/leads" class="nav-link active">👥 Leads</a>
+    <a href="/crm/prospecting" class="nav-link">🔍 Prospección</a>
+    <a href="/crm/seguimientos" class="nav-link">🔔 Follow-up</a>
+    <a href="/crm/reporte" class="nav-link">📄 Reporte</a>
+  </nav>
+</aside>
+
+<main class="main">
+  <a href="/crm/leads" class="back-link" style="text-decoration:none;">← Volver a Leads</a>
+
+  {% if flash %}
+  <div class="flash {% if flash_type == 'error' %}flash-err{% endif %}">{{ flash }}</div>
+  {% endif %}
+
+  <div class="lead-header">
+    <div>
+      <div class="lead-title">{{ lead.Nombre }}</div>
+      <div class="lead-meta">
+        {{ lead.Tipo }} · {{ lead.Comuna }}
+        {% if lead.Web %}· <a href="{{ lead.Web }}" target="_blank" style="color:var(--aurora);">{{ lead.Web }}</a>{% endif %}
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;">
+      <div class="score-circle">
+        <div class="num">{{ lead.Puntuacion | int }}</div>
+        <div class="lbl">Score</div>
+      </div>
+      <span class="badge-estado badge-{{ lead.Estado }}">{{ lead.Estado }}</span>
+    </div>
+  </div>
+
+  <!-- Pipeline tracker -->
+  <div class="card" style="padding:28px 20px 38px;">
+    <h3>Pipeline</h3>
+    <div class="pipeline-track">
+      {% set estados_vis = ['DESCUBIERTO','CONTACTADO','RESPONDIO','INTERESADO','PROPUESTA','CLIENTE'] %}
+      {% set idx_actual = estados_vis.index(lead.Estado) if lead.Estado in estados_vis else -1 %}
+      {% for i, e in estados_vis | enumerate %}
+        <div class="pipeline-step">
+          <div class="step-dot {{ 'done' if i < idx_actual else ('current' if i == idx_actual else '') }}">
+            {{ '✓' if i < idx_actual else (i+1) }}
+            <span class="step-label {{ 'step-current-label' if i == idx_actual else '' }}">{{ e }}</span>
+          </div>
+        </div>
+        {% if not loop.last %}
+        <div class="step-line {{ 'done' if i < idx_actual else '' }}"></div>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+
+    <!-- Info card -->
+    <div class="card">
+      <h3>Información del lead</h3>
+      <div class="info-grid">
+        <div class="info-item">
+          <label>Teléfono</label>
+          <span>{{ lead.Telefono or '—' }}</span>
+        </div>
+        <div class="info-item">
+          <label>Email</label>
+          <span>{{ lead.Email or '—' }}</span>
+        </div>
+        <div class="info-item">
+          <label>Dirección</label>
+          <span>{{ lead.Direccion or '—' }}</span>
+        </div>
+        <div class="info-item">
+          <label>Contacto</label>
+          <span>{{ lead.Contacto or '—' }}</span>
+        </div>
+        <div class="info-item">
+          <label>Fuente</label>
+          <span>{{ lead.Fuente or '—' }}</span>
+        </div>
+        <div class="info-item">
+          <label>Descubierto</label>
+          <span>{{ lead.Fecha_Descubierto[:10] if lead.Fecha_Descubierto else '—' }}</span>
+        </div>
+      </div>
+      {% if lead.Notas %}
+      <div style="margin-top:14px;">
+        <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;">Notas</label>
+        <p style="font-size:13px;color:var(--text);margin-top:4px;line-height:1.6;">{{ lead.Notas }}</p>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Actions card -->
+    <div class="card">
+      <h3>Acciones</h3>
+
+      <!-- Contactar -->
+      <form method="POST" action="/crm/leads/{{ lead.ID }}/contactar" style="margin-bottom:16px;">
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <select name="canal" class="select-dark" style="flex:1;">
+            <option value="email" {% if not lead.Email %}disabled{% endif %}>✉️ Email {% if not lead.Email %}(sin email){% endif %}</option>
+            <option value="whatsapp" {% if not lead.Telefono %}disabled{% endif %}>💬 WhatsApp {% if not lead.Telefono %}(sin tel){% endif %}</option>
+          </select>
+          <select name="tipo" class="select-dark" style="flex:1;">
+            <option value="primer_contacto">Primer contacto</option>
+            <option value="seguimiento">Seguimiento</option>
+            <option value="propuesta">Propuesta</option>
+            <option value="cierre">Cierre</option>
+          </select>
+        </div>
+        <button type="submit" class="btn-aurora" style="width:100%;">📤 Enviar mensaje</button>
+      </form>
+
+      <!-- Mover pipeline -->
+      <form method="POST" action="/crm/leads/{{ lead.ID }}/mover" style="margin-bottom:16px;">
+        <div style="display:flex;gap:8px;">
+          <select name="estado" class="select-dark" style="flex:1;">
+            {% for e in pipeline_estados %}
+            <option value="{{ e }}" {% if e == lead.Estado %}selected{% endif %}>{{ e }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" class="btn-ghost">Mover</button>
+        </div>
+      </form>
+
+      <!-- Agregar nota -->
+      <form method="POST" action="/crm/leads/{{ lead.ID }}/nota">
+        <textarea name="nota" placeholder="Agregar nota..." rows="2"
+          style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);
+                 border-radius:8px;padding:8px 12px;font-size:13px;resize:vertical;margin-bottom:8px;"></textarea>
+        <button type="submit" class="btn-ghost" style="width:100%;">Guardar nota</button>
+      </form>
+
+      <div style="margin-top:14px;">
+        <form method="POST" action="/crm/leads/{{ lead.ID }}/mover" onsubmit="return confirm('¿Marcar como perdido?')">
+          <input type="hidden" name="estado" value="PERDIDO" />
+          <button type="submit" class="btn-danger" style="width:100%;">✗ Marcar como perdido</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Interactions timeline -->
+  <div class="card">
+    <h3>Historial de interacciones ({{ interacciones | length }})</h3>
+    {% if interacciones %}
+    <div class="timeline">
+      {% for item in interacciones %}
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-content">
+          <div class="tl-header">
+            <div>
+              <span class="tl-type">{{ item.Tipo_Mensaje | replace('_', ' ') | title }}</span>
+              <span class="tl-canal">{{ item.Canal }}</span>
+            </div>
+            <span class="tl-date">{{ item.Fecha }}</span>
+          </div>
+          <div class="tl-body">{{ item.Contenido_Resumen }}</div>
+          <div class="tl-result result-{{ 'ok' if item.Resultado in ('enviado','ok','respondio') else ('error' if 'error' in item.Resultado else 'pendiente') }}">
+            {{ item.Resultado }}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p style="color:var(--muted);font-size:13px;">Sin interacciones aún.</p>
+    {% endif %}
+  </div>
+
+</main>
+</body>
+</html>
