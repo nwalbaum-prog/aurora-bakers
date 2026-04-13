@@ -82,7 +82,7 @@ def get_despachos_fecha(fecha: str) -> dict | None:
     try:
         resp = requests.get(
             f"{VENTAS_API_URL}/api/agentes/despachos-hoy",
-            params={'key': VENTAS_API_KEY, 'fecha': fecha},
+            params={'fecha': fecha},
             headers=_headers(),
             timeout=_TIMEOUT,
         )
@@ -165,8 +165,8 @@ def get_kpis(periodo: str = 'mes') -> dict:
 def get_inventario() -> dict | None:
     """Stock actual e ingredientes con alerta de reposición."""
     try:
-        resp = requests.get(f"{VENTAS_API_URL}/api/agentes/inventario",
-                           params={'key': VENTAS_API_KEY}, timeout=_TIMEOUT)
+        resp = requests.get(f"{_get_url()}/api/agentes/inventario",
+                           headers=_headers(), timeout=_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -193,8 +193,8 @@ def descontar_inventario(ingredientes: dict) -> bool:
 def get_plan_produccion(fecha: str) -> dict | None:
     """Plan de producción de una fecha + ingredientes necesarios."""
     try:
-        resp = requests.get(f"{VENTAS_API_URL}/api/agentes/produccion/{fecha}",
-                           timeout=_TIMEOUT)
+        resp = requests.get(f"{_get_url()}/api/agentes/produccion/{fecha}",
+                           headers=_headers(), timeout=_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -207,8 +207,8 @@ def get_plan_produccion(fecha: str) -> dict | None:
 def get_gastos_mes() -> dict | None:
     """Gastos del mes actual para el agente de finanzas."""
     try:
-        resp = requests.get(f"{VENTAS_API_URL}/api/agentes/gastos",
-                           timeout=_TIMEOUT)
+        resp = requests.get(f"{_get_url()}/api/agentes/gastos",
+                           headers=_headers(), timeout=_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -236,8 +236,8 @@ def registrar_gasto_api(descripcion: str, monto: float, categoria: str = 'Genera
 def get_agenda() -> dict | None:
     """Tareas y eventos pendientes del dueño."""
     try:
-        resp = requests.get(f"{VENTAS_API_URL}/api/agentes/agenda",
-                           timeout=_TIMEOUT)
+        resp = requests.get(f"{_get_url()}/api/agentes/agenda",
+                           headers=_headers(), timeout=_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -265,8 +265,8 @@ def crear_tarea_agenda(titulo: str, descripcion: str = '', tipo: str = 'tarea',
 def get_config_negocio() -> dict | None:
     """Configuración completa del negocio: recetas, precios, días despacho, etc."""
     try:
-        resp = requests.get(f"{VENTAS_API_URL}/api/agentes/config",
-                           timeout=_TIMEOUT)
+        resp = requests.get(f"{_get_url()}/api/agentes/config",
+                           headers=_headers(), timeout=_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
