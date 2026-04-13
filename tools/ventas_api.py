@@ -391,6 +391,25 @@ def crm_programar_contacto(lead_id: int, fecha: str) -> bool:
         return False
 
 
+def confirmar_produccion(fecha: str) -> dict | None:
+    """
+    Confirma la producción de una fecha: descuenta ingredientes del inventario
+    y marca el plan como 'listo'. Retorna resumen con descuentos y alertas de stock.
+    """
+    try:
+        resp = requests.post(
+            f"{_get_url()}/api/plan-produccion/{fecha}/confirmar",
+            headers=_headers(), timeout=_TIMEOUT,
+        )
+        if resp.ok:
+            return resp.json()
+        logger.warning(f"[ventas_api] confirmar_produccion {fecha}: {resp.status_code}")
+        return None
+    except Exception as e:
+        logger.error(f"[ventas_api] Error confirmando producción {fecha}: {e}")
+        return None
+
+
 def get_contexto_ventas_texto() -> str:
     """
     Genera un bloque de texto con los datos clave de ventas para incluir en prompts.

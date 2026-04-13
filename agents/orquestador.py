@@ -13,7 +13,7 @@ import logging
 import anthropic
 from agents.finanzas import ask_finanzas
 from agents.analista import ask_analista, get_contexto_negocio
-from agents.produccion import ask_produccion
+from agents.produccion import ask_produccion, confirmar_produccion_hoy
 from agents.agenda import ask_agenda, _procesar_tokens_agenda
 from agents.crm import get_metricas_crm, get_leads_para_seguimiento, generar_reporte_semanal
 from memoria.episodica import guardar_episodio, get_contexto_memoria
@@ -102,7 +102,7 @@ def _clasificar_keyword(mensaje: str) -> str:
     msg = mensaje.lower()
     if any(w in msg for w in ['plata', 'dinero', 'ingreso', 'gasto', 'margen', 'venta', 'reporte']):
         return 'FINANZAS'
-    if any(w in msg for w in ['producción', 'produccion', 'hornear', 'horno', 'ingrediente']):
+    if any(w in msg for w in ['producción', 'produccion', 'hornear', 'horno', 'ingrediente', 'confirmé', 'confirme', 'confirmar', 'terminé producción', 'termine produccion', 'listo hornear', 'ya horneé']):
         return 'PRODUCCION'
     if any(w in msg for w in ['tarea', 'evento', 'agenda', 'recordatorio', 'qué hay']):
         return 'AGENDA'
@@ -175,6 +175,11 @@ def _despachar(user_id: str, mensaje: str, intencion: str) -> str:
     elif intencion == 'ANALISTA':
         return ask_analista(user_id, mensaje)
     elif intencion == 'PRODUCCION':
+        msg_lower = mensaje.lower()
+        if any(w in msg_lower for w in ['confirmé', 'confirme', 'confirmar producción', 'confirmar produccion', 'terminé producción', 'termine produccion', 'ya horneé', 'ya hornee', 'listo hornear']):
+            from datetime import datetime
+            fecha = datetime.now().strftime('%Y-%m-%d')
+            return confirmar_produccion_hoy(fecha)
         return ask_produccion(user_id, mensaje)
     elif intencion == 'AGENDA':
         return ask_agenda(user_id, mensaje)

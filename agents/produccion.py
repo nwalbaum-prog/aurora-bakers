@@ -10,7 +10,7 @@ import anthropic
 from tools.sheets import get_records_cached
 from tools.whatsapp import send_whatsapp_safe
 from tools.email_tools import send_email_safe
-from tools.ventas_api import get_despachos_fecha, get_plan_produccion, get_inventario, descontar_inventario
+from tools.ventas_api import get_despachos_fecha, get_plan_produccion, get_inventario, descontar_inventario, confirmar_produccion
 from memoria.episodica import guardar_episodio, get_contexto_memoria
 import config
 
@@ -189,6 +189,57 @@ def enviar_plan_produccion(fecha_str: str | None = None) -> bool:
     if ok:
         logger.info(f"[produccion] Plan enviado por WA para {fecha_str}")
     return ok
+
+
+def confirmar_produccion_hoy(fecha_str: str | None = None) -> str:
+    """
+    Confirma la producción de una fecha (hoy por defecto), descuenta inventario
+    y retorna mensaje formateado para WhatsApp con resumen + alertas de stock.
+    """
+    if fecha_str is None:
+        fecha_str = datetime.now().strftime('%Y-%m-%d')
+
+    resultado = confirmar_produccion(fecha_str)
+
+    if resultado is None:
+        return f"❌ No se pudo confirmar producción: aurora-ventas no disponible."
+
+    if not resultado.get('ok'):
+        return f"⚠️ {resultado.get('error', 'Error al confirmar producción')}"
+
+    items    = resultado.get('items_confirmados', 0)
+    descuentos = resultado.get('descuentos', {})
+    alertas  = resultado.get('alertas_stock', [])
+
+    lineas = [f"✅ *Producción {fecha_str} confirmada*", f"_{items} ítem(s) marcados como listos_\n"]
+
+    if descuentos:
+        lineas.append("*Inventario descontado:*")
+        for ing, kg in sorted(descuentos.items()):
+            lineas.append(f"  • {ing}: -{kg:.3f} kg")
+
+    if alertas:
+        lineas.append("\n⚠️ *Stock bajo mínimo — reponer urgente:*")
+        for a in alertas:
+            lineas.append(f"  🔴 {a['ingrediente']}: {a['stock_kg']:.2f} kg (mín. {a['minimo_kg']:.2f} kg)")
+        # Notificar al dueño por WA si hay alertas críticas
+        alerta_msg = (
+            f"⚠️ *Alerta de inventario — {fecha_str}*\n"
+            + '\n'.join(f"🔴 {a['ingrediente']}: {a['stock_kg']:.2f} kg" for a in alertas)
+            + "\n\nReponer antes de la próxima producción."
+        )
+        send_whatsapp_safe(config.OWNER_PHONE, alerta_msg)
+    else:
+        lineas.append("\n✅ Stock suficiente para la próxima producción")
+
+    guardar_episodio(
+        agente='produccion',
+        pregunta=f'confirmar producción {fecha_str}',
+        respuesta_resumen=f'{items} ítems confirmados, {len(alertas)} alertas stock',
+        resultado='ok',
+    )
+
+    return '\n'.join(lineas)
 
 
 def ask_produccion(user_id: str, mensaje: str) -> str:

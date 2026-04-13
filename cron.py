@@ -79,6 +79,29 @@ def _tarea_reporte_financiero() -> None:
         logger.error(f"[cron] reporte_financiero error: {e}")
 
 
+def _tarea_recordatorio_produccion() -> None:
+    """L-V 16:00 — Recuerda confirmar producción si aún hay ítems pendientes."""
+    try:
+        from tools.ventas_api import get_plan_produccion
+        from tools.whatsapp import send_whatsapp_safe
+        from datetime import datetime
+        hoy = datetime.now().strftime('%Y-%m-%d')
+        plan_data = get_plan_produccion(hoy)
+        if plan_data is None:
+            return  # ventas no disponible
+        pendientes = [p for p in plan_data.get('plan', []) if p.get('estado') != 'listo']
+        if pendientes:
+            msg = (
+                f"🍞 *Recordatorio producción {hoy}*\n"
+                f"Tienes {len(pendientes)} ítem(s) sin confirmar.\n"
+                f"Responde *'confirmé la producción de hoy'* para descontar el inventario automáticamente."
+            )
+            send_whatsapp_safe(config.OWNER_PHONE, msg)
+            logger.info(f"[cron] recordatorio_produccion enviado: {len(pendientes)} pendientes")
+    except Exception as e:
+        logger.error(f"[cron] recordatorio_produccion error: {e}")
+
+
 def _tarea_reactivacion() -> None:
     """Martes y jueves 10:00 — Mensajes de reactivación a clientes inactivos."""
     try:
@@ -165,6 +188,14 @@ def iniciar_scheduler() -> None:
         _tarea_reactivacion,
         CronTrigger(day_of_week='tue,thu', hour=10, minute=0, timezone=TZ),
         id='reactivacion',
+        replace_existing=True,
+    )
+
+    # L-V 16:00 — recordatorio confirmar producción
+    _scheduler.add_job(
+        _tarea_recordatorio_produccion,
+        CronTrigger(day_of_week='mon-fri', hour=16, minute=0, timezone=TZ),
+        id='recordatorio_produccion',
         replace_existing=True,
     )
 
