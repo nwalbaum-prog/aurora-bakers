@@ -29,13 +29,17 @@ def send_whatsapp(to: str, message: str) -> bool:
         message = message[:config.WA_MAX_CHARS - 3] + '...'
 
     url = f"{config.EVOLUTION_API_URL}/message/sendText/{config.EVOLUTION_INSTANCE}"
+    # Evolution API v1 usa "textMessage": {"text": "..."} en vez de "text" directo
     payload = {
         "number": numero,
-        "text": message,
+        "textMessage": {
+            "text": message,
+        },
     }
     headers = {
         "apikey": config.EVOLUTION_API_KEY,
         "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true",  # bypass ngrok browser warning page
     }
     resp = requests.post(url, json=payload, headers=headers, timeout=10)
     resp.raise_for_status()
@@ -59,7 +63,7 @@ def get_qr_code() -> dict:
     """
     try:
         url = f"{config.EVOLUTION_API_URL}/instance/connect/{config.EVOLUTION_INSTANCE}"
-        resp = requests.get(url, headers={"apikey": config.EVOLUTION_API_KEY}, timeout=10)
+        resp = requests.get(url, headers={"apikey": config.EVOLUTION_API_KEY, "ngrok-skip-browser-warning": "true"}, timeout=10)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -71,7 +75,7 @@ def get_connection_status() -> str:
     """Retorna el estado de conexión: 'open', 'connecting', 'close'."""
     try:
         url = f"{config.EVOLUTION_API_URL}/instance/connectionState/{config.EVOLUTION_INSTANCE}"
-        resp = requests.get(url, headers={"apikey": config.EVOLUTION_API_KEY}, timeout=5)
+        resp = requests.get(url, headers={"apikey": config.EVOLUTION_API_KEY, "ngrok-skip-browser-warning": "true"}, timeout=5)
         resp.raise_for_status()
         data = resp.json()
         return data.get('instance', {}).get('state', 'unknown')
