@@ -65,5 +65,5 @@ try {
     $resp = Invoke-RestMethod -Uri $url -Method POST -Body $body -ContentType "application/json"
     Write-Host "Sincronizado: $($resp.total) entradas en Railway" -ForegroundColor Green
 } catch {
-    Write-Host "ERROR enviando a Railway: $_" -ForegroundColor Red
+    Write-Host ("ERROR enviando a Railway: " + $_.Exception.Message) -ForegroundColor Red
 }
