@@ -84,7 +84,9 @@ def webhook_evolution():
         event = data.get('event', '')
 
         # Solo procesar mensajes entrantes nuevos
-        if event not in ('messages.upsert', 'message.upsert', 'messages.set'):
+        # NOTA: 'messages.set' es sincronización histórica — ignorar
+        if event not in ('messages.upsert', 'message.upsert'):
+            logger.info(f"[evolution] Evento ignorado: {event}")
             return jsonify({'status': 'ignored', 'event': event}), 200
 
         msg_data = data.get('data', {})
