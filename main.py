@@ -73,7 +73,7 @@ def health():
 @app.route('/webhook/evolution', methods=['POST'])
 def webhook_evolution():
     """
-    Webhook para Evolution API v2.
+    Webhook para Evolution API v1.
     Formato del payload:
       { "event": "messages.upsert", "instance": "...",
         "data": { "key": {"remoteJid": "56912345678@s.whatsapp.net", "fromMe": false},
@@ -83,10 +83,11 @@ def webhook_evolution():
         data = request.get_json(silent=True) or {}
         event = data.get('event', '')
 
+        logger.info(f"[evolution] Evento recibido: {event}")
+
         # Solo procesar mensajes entrantes nuevos
         # NOTA: 'messages.set' es sincronización histórica — ignorar
         if event not in ('messages.upsert', 'message.upsert'):
-            logger.info(f"[evolution] Evento ignorado: {event}")
             return jsonify({'status': 'ignored', 'event': event}), 200
 
         msg_data = data.get('data', {})
@@ -105,9 +106,18 @@ def webhook_evolution():
         remote_jid = key.get('remoteJid', '')
         from_ = remote_jid.split('@')[0]
 
+        logger.info(f"[evolution] remoteJid={remote_jid} from_={from_}")
+
         # Ignorar grupos
         if '@g.us' in remote_jid or not from_:
             return jsonify({'status': 'group_ignored'}), 200
+
+        # Filtrar mensajes viejos (más de 5 minutos) — evita procesar mensajes encolados
+        import time
+        msg_ts = msg_data.get('messageTimestamp', 0)
+        if msg_ts and (time.time() - int(msg_ts)) > 300:
+            logger.info(f"[evolution] Mensaje antiguo ignorado (ts={msg_ts}) de {from_}")
+            return jsonify({'status': 'old_message'}), 200
 
         # Extraer texto (distintos tipos de mensaje)
         message_obj = msg_data.get('message', {})
