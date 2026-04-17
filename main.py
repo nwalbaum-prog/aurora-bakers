@@ -142,17 +142,25 @@ def webhook_evolution():
             logger.info(f"[evolution] Mensaje sin texto de {from_} (tipo: {msg_data.get('messageType', '?')})")
             return jsonify({'status': 'no_text'}), 200
 
-        logger.info(f"[evolution] Mensaje de {from_} (jid={remote_jid}): {text[:80]}")
+        # Resolver LID → número de teléfono real si es multi-device
+        if '@lid' in remote_jid and from_ in config.LID_PHONE_MAP:
+            phone = config.LID_PHONE_MAP[from_]
+            logger.info(f"[evolution] LID {from_} → {phone}")
+        elif '@lid' not in remote_jid:
+            phone = from_  # JID normal @s.whatsapp.net
+        else:
+            logger.warning(f"[evolution] LID desconocido {from_} — no hay mapeo, ignorando")
+            return jsonify({'status': 'unknown_lid'}), 200
+
+        logger.info(f"[evolution] Mensaje de {phone} (jid={remote_jid}): {text[:80]}")
 
         # Enrutar: dueño → orquestador, clientes → sophie
-        # Usar from_ para comparar con OWNER_PHONE, pero remote_jid para responder
-        if from_ == config.OWNER_PHONE:
-            respuesta = ask_orquestador(from_, text)
+        if phone == config.OWNER_PHONE:
+            respuesta = ask_orquestador(phone, text)
         else:
-            respuesta = ask_sophie(from_, text, canal='whatsapp')
+            respuesta = ask_sophie(phone, text, canal='whatsapp')
 
-        # Responder al JID completo (soporta @s.whatsapp.net y @lid multi-device)
-        send_whatsapp_safe(remote_jid, respuesta)
+        send_whatsapp_safe(phone, respuesta)
         return jsonify({'status': 'ok'}), 200
 
     except Exception as e:

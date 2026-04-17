@@ -27,6 +27,15 @@ EVOLUTION_API_URL  = os.environ.get('EVOLUTION_API_URL', 'http://localhost:8081'
 EVOLUTION_API_KEY  = os.environ.get('EVOLUTION_API_KEY', '')
 EVOLUTION_INSTANCE = os.environ.get('EVOLUTION_INSTANCE', 'aurora-bakers')
 
+# Mapeo LID → número de teléfono (WhatsApp multi-device)
+# Formato env var: "lid1:phone1,lid2:phone2"
+_lid_map_raw = os.environ.get('LID_PHONE_MAP', '')
+LID_PHONE_MAP: dict[str, str] = {}
+for pair in _lid_map_raw.split(','):
+    if ':' in pair:
+        lid, phone = pair.strip().split(':', 1)
+        LID_PHONE_MAP[lid.strip()] = phone.strip()
+
 OWNER_PHONE  = os.environ.get('OWNER_PHONE', '56994891724')
 DANIEL_PHONE = os.environ.get('DANIEL_PHONE', '56994891724')
 OWNER_EMAIL  = os.environ.get('OWNER_EMAIL', 'nwalbaum@gmail.com')
