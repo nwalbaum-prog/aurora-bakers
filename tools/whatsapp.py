@@ -46,6 +46,8 @@ def send_whatsapp(to: str, message: str) -> bool:
         "ngrok-skip-browser-warning": "true",  # bypass ngrok browser warning page
     }
     resp = requests.post(url, json=payload, headers=headers, timeout=10)
+    if not resp.ok:
+        logger.error(f"[wa] Error {resp.status_code} enviando a {numero}: {resp.text[:300]}")
     resp.raise_for_status()
     logger.info(f"[wa] Mensaje enviado a {numero} ({len(message)} chars)")
     return True

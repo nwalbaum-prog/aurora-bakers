@@ -85,6 +85,11 @@ def webhook_evolution():
 
         logger.info(f"[evolution] Evento recibido: {event}")
 
+        # Loguear contacts.update para ver si tiene mapeo LID → teléfono
+        if event == 'contacts.update':
+            logger.info(f"[evolution] contacts.update data: {str(data.get('data', {}))[:400]}")
+            return jsonify({'status': 'ignored', 'event': event}), 200
+
         # Solo procesar mensajes entrantes nuevos
         # NOTA: 'messages.set' es sincronización histórica — ignorar
         if event not in ('messages.upsert', 'message.upsert'):
