@@ -48,6 +48,9 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, template_folder='templates')
 app.secret_key = os.environ.get('SECRET_KEY', 'aurora-bakers-crm-secret')
 
+# Cache en memoria: LID → teléfono (se puede actualizar vía /contacts/sync)
+_lid_cache: dict[str, str] = {}
+
 # Filtro Jinja2 para enumerate
 @app.template_filter('enumerate')
 def jinja_enumerate(iterable):
@@ -143,14 +146,15 @@ def webhook_evolution():
             return jsonify({'status': 'no_text'}), 200
 
         # Resolver LID → número de teléfono real si es multi-device
-        if '@lid' in remote_jid and from_ in config.LID_PHONE_MAP:
-            phone = config.LID_PHONE_MAP[from_]
-            logger.info(f"[evolution] LID {from_} → {phone}")
-        elif '@lid' not in remote_jid:
-            phone = from_  # JID normal @s.whatsapp.net
+        if '@lid' in remote_jid:
+            phone = _lid_cache.get(from_) or config.LID_PHONE_MAP.get(from_)
+            if phone:
+                logger.info(f"[evolution] LID {from_} → {phone}")
+            else:
+                logger.warning(f"[evolution] LID desconocido {from_} (pushName={msg_data.get('pushName','?')}) — sin mapeo")
+                return jsonify({'status': 'unknown_lid', 'lid': from_}), 200
         else:
-            logger.warning(f"[evolution] LID desconocido {from_} — no hay mapeo, ignorando")
-            return jsonify({'status': 'unknown_lid'}), 200
+            phone = from_  # JID normal @s.whatsapp.net
 
         logger.info(f"[evolution] Mensaje de {phone} (jid={remote_jid}): {text[:80]}")
 
@@ -179,6 +183,23 @@ def whatsapp_status():
     if estado != 'open':
         resultado['qr'] = get_qr_code()
     return jsonify(resultado)
+
+
+# ── Sincronización de contactos LID → teléfono ───────────────────────────────
+
+@app.route('/contacts/sync', methods=['POST'])
+def contacts_sync():
+    """
+    Recibe un mapa LID→teléfono desde el script local de sincronización.
+    Body: {"lid1": "phone1", "lid2": "phone2"}
+    """
+    token = request.args.get('token', '')
+    if token != config.CRON_SECRET:
+        return jsonify({'error': 'unauthorized'}), 403
+    mapping = request.get_json(silent=True) or {}
+    _lid_cache.update(mapping)
+    logger.info(f"[contacts] LID cache actualizado: {len(_lid_cache)} entradas")
+    return jsonify({'ok': True, 'total': len(_lid_cache)})
 
 
 # ── Webhook Meta (legacy, mantenido para compatibilidad) ──────────────────────
