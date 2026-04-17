@@ -96,6 +96,10 @@ def webhook_evolution():
         if isinstance(msg_data, list):
             msg_data = msg_data[0] if msg_data else {}
 
+        # Log completo para debug de LID
+        logger.info(f"[evolution] msg_data keys: {list(msg_data.keys())}")
+        logger.info(f"[evolution] msg_data completo: {str(msg_data)[:500]}")
+
         key = msg_data.get('key', {})
 
         # Ignorar mensajes propios (enviados por el bot)
