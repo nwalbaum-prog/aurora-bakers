@@ -21,8 +21,12 @@ def send_whatsapp(to: str, message: str) -> bool:
         logger.warning("[wa] Evolution API no configurada — mensaje no enviado")
         return False
 
-    # Limpiar número: extraer solo dígitos y código de país
-    numero = to.split('@')[0].strip().lstrip('+')
+    # Aceptar JID completo (ej: "56912345678@s.whatsapp.net" o "38328439148772@lid")
+    # o número limpio (ej: "56912345678")
+    if '@' in to:
+        numero = to  # pasar JID completo — Evolution API lo maneja directamente
+    else:
+        numero = to.strip().lstrip('+')
 
     # Truncar si excede límite de WA
     if len(message) > config.WA_MAX_CHARS:

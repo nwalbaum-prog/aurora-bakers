@@ -133,15 +133,17 @@ def webhook_evolution():
             logger.info(f"[evolution] Mensaje sin texto de {from_} (tipo: {msg_data.get('messageType', '?')})")
             return jsonify({'status': 'no_text'}), 200
 
-        logger.info(f"[evolution] Mensaje de {from_}: {text[:80]}")
+        logger.info(f"[evolution] Mensaje de {from_} (jid={remote_jid}): {text[:80]}")
 
         # Enrutar: dueño → orquestador, clientes → sophie
+        # Usar from_ para comparar con OWNER_PHONE, pero remote_jid para responder
         if from_ == config.OWNER_PHONE:
             respuesta = ask_orquestador(from_, text)
         else:
             respuesta = ask_sophie(from_, text, canal='whatsapp')
 
-        send_whatsapp_safe(from_, respuesta)
+        # Responder al JID completo (soporta @s.whatsapp.net y @lid multi-device)
+        send_whatsapp_safe(remote_jid, respuesta)
         return jsonify({'status': 'ok'}), 200
 
     except Exception as e:
