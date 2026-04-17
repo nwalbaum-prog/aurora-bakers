@@ -68,39 +68,60 @@ def health():
     })
 
 
-# ── Webhook WhatsApp Meta ─────────────────────────────────────────────────────
+# ── Webhook WhatsApp Evolution API ───────────────────────────────────────────
 
-@app.route('/webhook/meta', methods=['GET', 'POST'])
-def webhook_meta():
-    if request.method == 'GET':
-        # Verificación del webhook
-        mode      = request.args.get('hub.mode')
-        token     = request.args.get('hub.verify_token')
-        challenge = request.args.get('hub.challenge')
-        if mode == 'subscribe' and token == config.META_VERIFY_TOKEN:
-            logger.info("[meta] Webhook verificado")
-            return Response(challenge, status=200)
-        return Response('Forbidden', status=403)
-
-    # POST: mensaje entrante
+@app.route('/webhook/evolution', methods=['POST'])
+def webhook_evolution():
+    """
+    Webhook para Evolution API v2.
+    Formato del payload:
+      { "event": "messages.upsert", "instance": "...",
+        "data": { "key": {"remoteJid": "56912345678@s.whatsapp.net", "fromMe": false},
+                  "message": {"conversation": "Hola"}, "messageType": "conversation" } }
+    """
     try:
         data = request.get_json(silent=True) or {}
-        entry = data.get('entry', [{}])[0]
-        changes = entry.get('changes', [{}])[0]
-        value   = changes.get('value', {})
-        messages = value.get('messages', [])
+        event = data.get('event', '')
 
-        if not messages:
-            return jsonify({'status': 'no_message'}), 200
+        # Solo procesar mensajes entrantes nuevos
+        if event not in ('messages.upsert', 'message.upsert', 'messages.set'):
+            return jsonify({'status': 'ignored', 'event': event}), 200
 
-        msg     = messages[0]
-        from_   = msg.get('from', '')
-        text    = msg.get('text', {}).get('body', '').strip()
+        msg_data = data.get('data', {})
+
+        # Algunos webhooks envían lista; tomamos el primero
+        if isinstance(msg_data, list):
+            msg_data = msg_data[0] if msg_data else {}
+
+        key = msg_data.get('key', {})
+
+        # Ignorar mensajes propios (enviados por el bot)
+        if key.get('fromMe', False):
+            return jsonify({'status': 'own_message'}), 200
+
+        # Extraer número: "56912345678@s.whatsapp.net" → "56912345678"
+        remote_jid = key.get('remoteJid', '')
+        from_ = remote_jid.split('@')[0]
+
+        # Ignorar grupos
+        if '@g.us' in remote_jid or not from_:
+            return jsonify({'status': 'group_ignored'}), 200
+
+        # Extraer texto (distintos tipos de mensaje)
+        message_obj = msg_data.get('message', {})
+        text = (
+            message_obj.get('conversation') or
+            message_obj.get('extendedTextMessage', {}).get('text') or
+            message_obj.get('buttonsResponseMessage', {}).get('selectedButtonId') or
+            message_obj.get('listResponseMessage', {}).get('title') or
+            ''
+        ).strip()
 
         if not text:
+            logger.info(f"[evolution] Mensaje sin texto de {from_} (tipo: {msg_data.get('messageType', '?')})")
             return jsonify({'status': 'no_text'}), 200
 
-        logger.info(f"[meta] Mensaje de {from_}: {text[:80]}")
+        logger.info(f"[evolution] Mensaje de {from_}: {text[:80]}")
 
         # Enrutar: dueño → orquestador, clientes → sophie
         if from_ == config.OWNER_PHONE:
@@ -112,8 +133,34 @@ def webhook_meta():
         return jsonify({'status': 'ok'}), 200
 
     except Exception as e:
-        logger.error(f"[meta] Error en webhook: {e}")
+        logger.error(f"[evolution] Error en webhook: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+# ── Estado conexión WhatsApp ──────────────────────────────────────────────────
+
+@app.route('/whatsapp/status')
+def whatsapp_status():
+    """Estado de la conexión WhatsApp y QR si está desconectado."""
+    from tools.whatsapp import get_connection_status, get_qr_code
+    estado = get_connection_status()
+    resultado = {'estado': estado}
+    if estado != 'open':
+        resultado['qr'] = get_qr_code()
+    return jsonify(resultado)
+
+
+# ── Webhook Meta (legacy, mantenido para compatibilidad) ──────────────────────
+
+@app.route('/webhook/meta', methods=['GET'])
+def webhook_meta_verify():
+    """Verificación de webhook Meta (legacy)."""
+    mode      = request.args.get('hub.mode')
+    token     = request.args.get('hub.verify_token')
+    challenge = request.args.get('hub.challenge')
+    if mode == 'subscribe' and token == config.META_VERIFY_TOKEN:
+        return Response(challenge, status=200)
+    return Response('Forbidden', status=403)
 
 
 # ── Webhook Twilio (llamadas) ─────────────────────────────────────────────────

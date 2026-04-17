@@ -19,8 +19,13 @@ GOOGLE_PLACES_API_KEY = os.environ.get('GOOGLE_PLACES_API_KEY', '')  # optional
 SERPAPI_KEY           = os.environ.get('SERPAPI_KEY', '')             # optional
 
 META_VERIFY_TOKEN     = os.environ.get('META_VERIFY_TOKEN', 'aurora_bakers_2024')
-META_PAGE_ACCESS_TOKEN = os.environ.get('META_PAGE_ACCESS_TOKEN', '')
-WHATSAPP_PHONE_NUMBER_ID = os.environ.get('WHATSAPP_PHONE_NUMBER_ID', '')
+META_PAGE_ACCESS_TOKEN = os.environ.get('META_PAGE_ACCESS_TOKEN', '')   # legacy
+WHATSAPP_PHONE_NUMBER_ID = os.environ.get('WHATSAPP_PHONE_NUMBER_ID', '')  # legacy
+
+# ── Evolution API (reemplaza Meta Cloud API) ─────────────────────────────────
+EVOLUTION_API_URL  = os.environ.get('EVOLUTION_API_URL', 'http://localhost:8081')
+EVOLUTION_API_KEY  = os.environ.get('EVOLUTION_API_KEY', '')
+EVOLUTION_INSTANCE = os.environ.get('EVOLUTION_INSTANCE', 'aurora-bakers')
 
 OWNER_PHONE  = os.environ.get('OWNER_PHONE', '56994891724')
 DANIEL_PHONE = os.environ.get('DANIEL_PHONE', '56994891724')

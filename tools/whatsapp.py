@@ -1,5 +1,6 @@
 """
-tools/whatsapp.py — Envío de mensajes por WhatsApp Meta API
+tools/whatsapp.py — Envío de mensajes por WhatsApp via Evolution API
+(migrado desde Meta Cloud API — no requiere developer portal)
 """
 import logging
 import requests
@@ -12,32 +13,33 @@ logger = logging.getLogger(__name__)
 @con_reintento(max_intentos=3, delay=2, exceptions=(requests.RequestException,))
 def send_whatsapp(to: str, message: str) -> bool:
     """
-    Envía un mensaje de texto por WhatsApp.
-    `to` debe incluir código de país sin '+' (ej: '56912345678').
+    Envía un mensaje de texto por WhatsApp via Evolution API.
+    `to` debe incluir código de país sin '+' ni '@' (ej: '56912345678').
     Retorna True si el envío fue exitoso.
     """
-    if not config.META_PAGE_ACCESS_TOKEN or not config.WHATSAPP_PHONE_NUMBER_ID:
-        logger.warning("[wa] Credenciales de WhatsApp no configuradas — mensaje no enviado")
+    if not config.EVOLUTION_API_URL or not config.EVOLUTION_API_KEY or not config.EVOLUTION_INSTANCE:
+        logger.warning("[wa] Evolution API no configurada — mensaje no enviado")
         return False
+
+    # Limpiar número: extraer solo dígitos y código de país
+    numero = to.split('@')[0].strip().lstrip('+')
 
     # Truncar si excede límite de WA
     if len(message) > config.WA_MAX_CHARS:
         message = message[:config.WA_MAX_CHARS - 3] + '...'
 
-    url = f"https://graph.facebook.com/v17.0/{config.WHATSAPP_PHONE_NUMBER_ID}/messages"
+    url = f"{config.EVOLUTION_API_URL}/message/sendText/{config.EVOLUTION_INSTANCE}"
     payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "text",
-        "text": {"body": message},
+        "number": numero,
+        "text": message,
     }
     headers = {
-        "Authorization": f"Bearer {config.META_PAGE_ACCESS_TOKEN}",
+        "apikey": config.EVOLUTION_API_KEY,
         "Content-Type": "application/json",
     }
     resp = requests.post(url, json=payload, headers=headers, timeout=10)
     resp.raise_for_status()
-    logger.info(f"[wa] Mensaje enviado a {to} ({len(message)} chars)")
+    logger.info(f"[wa] Mensaje enviado a {numero} ({len(message)} chars)")
     return True
 
 
@@ -48,3 +50,31 @@ def send_whatsapp_safe(to: str, message: str) -> bool:
     except Exception as e:
         logger.error(f"[wa] Error enviando a {to}: {e}")
         return False
+
+
+def get_qr_code() -> dict:
+    """
+    Obtiene el QR code para conectar la instancia de WhatsApp.
+    Retorna {'qrcode': 'data:image/png;base64,...'} o {'error': '...'}.
+    """
+    try:
+        url = f"{config.EVOLUTION_API_URL}/instance/connect/{config.EVOLUTION_INSTANCE}"
+        resp = requests.get(url, headers={"apikey": config.EVOLUTION_API_KEY}, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        logger.error(f"[wa] Error obteniendo QR: {e}")
+        return {"error": str(e)}
+
+
+def get_connection_status() -> str:
+    """Retorna el estado de conexión: 'open', 'connecting', 'close'."""
+    try:
+        url = f"{config.EVOLUTION_API_URL}/instance/connectionState/{config.EVOLUTION_INSTANCE}"
+        resp = requests.get(url, headers={"apikey": config.EVOLUTION_API_KEY}, timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get('instance', {}).get('state', 'unknown')
+    except Exception as e:
+        logger.error(f"[wa] Error verificando estado: {e}")
+        return "error"

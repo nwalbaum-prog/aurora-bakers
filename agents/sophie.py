@@ -160,7 +160,7 @@ def _procesar_tokens_sophie(user_id: str, respuesta: str, tipo: str) -> str:
 
 
 def _manejar_pedido_confirmado(user_id: str, token: str) -> None:
-    """Guarda un pedido minorista en Sheets."""
+    """Guarda un pedido minorista en Sheets Y en aurora-ventas."""
     try:
         partes = token.split('|')
         if len(partes) < 7:
@@ -177,10 +177,23 @@ def _manejar_pedido_confirmado(user_id: str, token: str) -> None:
         items_str = ', '.join(f"{i.get('cantidad',1)}x {i.get('producto','')}" for i in items)
 
         fecha = datetime.now().strftime('%Y-%m-%d %H:%M')
+
+        # 1. Guardar en Google Sheets (flujo original)
         append_row(config.SHEET_PEDIDOS, [
             fecha, nombre, telefono, items_str, total, dia, tipo_entrega, 'pendiente', 'whatsapp'
         ])
         append_row(config.SHEET_INGRESOS, [fecha, total, f'Pedido {nombre}', 'whatsapp'])
+
+        # 2. Sincronizar con aurora-ventas
+        _sincronizar_venta_aurora(
+            nombre=nombre,
+            telefono=telefono,
+            items=items,
+            total=total,
+            dia_entrega=dia,
+            tipo_entrega=tipo_entrega,
+            segmento='CLIENTE',
+        )
 
         conversaciones.marcar_pedido_guardado(user_id)
         logger.info(f"[sophie] Pedido confirmado: {nombre} ${total}")
@@ -190,7 +203,7 @@ def _manejar_pedido_confirmado(user_id: str, token: str) -> None:
 
 
 def _manejar_pedido_mayorista(user_id: str, token: str) -> None:
-    """Guarda un pedido mayorista en Sheets."""
+    """Guarda un pedido mayorista en Sheets Y en aurora-ventas."""
     try:
         partes = token.split('|')
         if len(partes) < 5:
@@ -206,16 +219,126 @@ def _manejar_pedido_mayorista(user_id: str, token: str) -> None:
         items_str = ', '.join(f"{i.get('cantidad',1)}x {i.get('producto','')}" for i in items)
 
         fecha = datetime.now().strftime('%Y-%m-%d %H:%M')
+
+        # 1. Guardar en Google Sheets (flujo original)
         append_row(config.SHEET_PEDIDOS_MAYORISTAS, [
             fecha, empresa, rut, items_str, total, dia, 'pendiente'
         ])
         append_row(config.SHEET_INGRESOS, [fecha, total, f'Mayorista {empresa}', 'whatsapp'])
+
+        # 2. Sincronizar con aurora-ventas
+        _sincronizar_venta_aurora(
+            nombre=empresa,
+            telefono=rut,   # usamos el RUT como identificador del mayorista
+            items=items,
+            total=total,
+            dia_entrega=dia,
+            tipo_entrega='despacho',
+            segmento='HORECA',
+            notas=f'RUT: {rut}',
+        )
 
         conversaciones.marcar_pedido_guardado(user_id)
         logger.info(f"[sophie] Pedido mayorista: {empresa} ${total}")
 
     except Exception as e:
         logger.error(f"[sophie] Error guardando pedido mayorista: {e}")
+
+
+# ── Sincronización con aurora-ventas ─────────────────────────────────────────
+
+def _sincronizar_venta_aurora(
+    nombre: str,
+    telefono: str,
+    items: list,
+    total: float,
+    dia_entrega: str,
+    tipo_entrega: str,
+    segmento: str = 'CLIENTE',
+    notas: str = '',
+) -> None:
+    """
+    Crea o actualiza el cliente y la venta en aurora-ventas via API.
+    Falla silenciosamente si el sistema de ventas no está disponible.
+    """
+    try:
+        import requests as _req
+        from tools.ventas_api import VENTAS_API_URL, VENTAS_API_KEY, get_clientes
+
+        headers = {'X-Agent-Key': VENTAS_API_KEY, 'Content-Type': 'application/json'}
+
+        # 1. Buscar o crear cliente
+        cliente_id = None
+        clientes = get_clientes(q=nombre)
+        if clientes:
+            # Buscar por teléfono exacto o nombre
+            for c in clientes:
+                tel_c = str(c.get('telefono', '')).replace(' ', '').replace('-', '')
+                tel_n = str(telefono).replace(' ', '').replace('-', '')
+                if tel_c == tel_n or c.get('nombre', '').lower() == nombre.lower():
+                    cliente_id = c.get('id')
+                    break
+
+        if not cliente_id:
+            # Crear nuevo cliente
+            resp = _req.post(
+                f"{VENTAS_API_URL}/api/clientes",
+                json={
+                    'nombre':   nombre,
+                    'telefono': telefono,
+                    'segmento': segmento,
+                    'canal':    'whatsapp',
+                    'activo':   True,
+                },
+                headers=headers,
+                timeout=8,
+            )
+            if resp.ok:
+                cliente_id = resp.json().get('id')
+                logger.info(f"[sophie→ventas] Cliente creado: {nombre} (id={cliente_id})")
+            else:
+                logger.warning(f"[sophie→ventas] No se pudo crear cliente: {resp.text[:100]}")
+
+        # 2. Crear la venta con sus items
+        detalle = []
+        for item in items:
+            detalle.append({
+                'descripcion': item.get('producto', ''),
+                'cantidad':    float(item.get('cantidad', 1)),
+                'precio':      float(item.get('precio', total / max(len(items), 1))),
+            })
+
+        if not detalle:
+            # Si no hay detalle estructurado, crear un item genérico
+            detalle = [{'descripcion': 'Pedido WhatsApp', 'cantidad': 1, 'precio': total}]
+
+        venta_body = {
+            'cliente_id':   cliente_id,
+            'total':        total,
+            'forma_pago':   'pendiente',
+            'estado':       'pendiente',
+            'canal':        'whatsapp',
+            'fecha_entrega': dia_entrega,
+            'tipo_entrega': tipo_entrega,
+            'notas':        notas or f'Pedido via WhatsApp Sophie',
+            'detalle':      detalle,
+        }
+
+        resp = _req.post(
+            f"{VENTAS_API_URL}/api/ventas",
+            json=venta_body,
+            headers=headers,
+            timeout=8,
+        )
+        if resp.ok:
+            venta_id = resp.json().get('id')
+            logger.info(f"[sophie→ventas] Venta creada: id={venta_id} ${total} cliente={nombre}")
+        else:
+            logger.warning(f"[sophie→ventas] No se pudo crear venta: {resp.text[:100]}")
+
+    except Exception as e:
+        # Falla silenciosa: Google Sheets ya guardó el pedido
+        logger.warning(f"[sophie→ventas] aurora-ventas no disponible o error: {e}")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
