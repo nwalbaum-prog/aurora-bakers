@@ -22,13 +22,14 @@ import config
 logger = logging.getLogger(__name__)
 
 INTENCIONES_VALIDAS = {
-    'FINANZAS':   'consultas financieras, gastos, ingresos, reportes, márgenes, P&L',
-    'ANALISTA':   'tendencias, análisis, clientes inactivos, estadísticas',
-    'PRODUCCION': 'plan de producción, ingredientes, hornear, cantidades, inventario',
-    'AGENDA':     'tareas, eventos, recordatorios, qué hacer hoy',
-    'SOPHIE':     'pedidos de clientes, ventas, precios, catálogo',
-    'CRM':        'leads, prospectos, pipeline, seguimientos, nuevos clientes B2B',
-    'GENERAL':    'saludos, preguntas generales sobre el negocio',
+    'FINANZAS':       'consultas financieras, gastos, ingresos, reportes, márgenes, P&L',
+    'ANALISTA':       'tendencias, análisis, clientes inactivos, estadísticas',
+    'PRODUCCION':     'plan de producción, ingredientes, hornear, cantidades, inventario',
+    'AGENDA':         'tareas, eventos, recordatorios, qué hacer hoy',
+    'SOPHIE':         'pedidos de clientes, ventas, precios, catálogo',
+    'CRM':            'leads, prospectos, pipeline, seguimientos, nuevos clientes B2B',
+    'DELEGAR_SOPHIE': 'asignar tarea a Sophie, mensajes programados a clientes, notificaciones de despacho, seguimientos automáticos a clientes por WhatsApp',
+    'GENERAL':        'saludos, preguntas generales sobre el negocio',
 }
 
 ORQUESTADOR_SYSTEM = """Eres el orquestador de Aurora Bakers (panadería artesanal en Santiago).
@@ -190,6 +191,8 @@ def _despachar(user_id: str, mensaje: str, intencion: str) -> str:
         )
     elif intencion == 'CRM':
         return _respuesta_crm(user_id, mensaje)
+    elif intencion == 'DELEGAR_SOPHIE':
+        return _crear_tarea_sophie(mensaje)
     else:
         return _respuesta_general(user_id, mensaje)
 
@@ -247,3 +250,87 @@ def _respuesta_general(user_id: str, mensaje: str) -> str:
     except Exception as e:
         logger.error(f"[orquestador] Error en respuesta general: {e}")
         return f"❌ Error procesando tu consulta: {e}"
+
+
+def _crear_tarea_sophie(mensaje: str) -> str:
+    """
+    Extrae la tarea delegada del mensaje del dueño y la crea en aurora-ventas.
+    Usa Claude para parsear: destinatario, mensaje, fecha/hora, condición.
+    """
+    try:
+        from datetime import datetime as _dt
+        import requests as _req
+        from tools.ventas_api import VENTAS_API_URL, VENTAS_API_KEY, crear_tarea_agenda
+        hoy = _dt.now().isoformat()
+
+        cliente = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        resp = cliente.messages.create(
+            model=config.MODEL,
+            max_tokens=300,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Hoy es {hoy}. El dueño de Aurora Bakers quiere que Sophie "
+                    f"(asistente WhatsApp) haga lo siguiente:\n\"{mensaje}\"\n\n"
+                    "Extrae la tarea. Responde SOLO con JSON válido:\n"
+                    '{"telefono_destino": "56912345678 o null si es recordatorio del dueño", '
+                    '"mensaje": "texto exacto que Sophie enviará", '
+                    '"ejecutar_en": "2026-05-11T10:00:00", '
+                    '"subtipo": "mensaje_programado", '
+                    '"condicion": null}\n\n'
+                    "subtipo: mensaje_programado | notificacion_despacho | "
+                    "seguimiento_condicional | recordatorio_dueno\n"
+                    "condicion: null o 'si_no_respondio'\n"
+                    "Si no hay hora específica, usa 10:00 del día indicado.\n"
+                    "Para 'mañana', usa la fecha de mañana."
+                ),
+            }],
+        )
+        texto = resp.content[0].text.strip()
+        inicio = texto.find('{')
+        fin    = texto.rfind('}') + 1
+        if inicio < 0 or fin <= inicio:
+            return "No pude entender la tarea. ¿Puedes ser más específico? 🙏"
+
+        data    = json.loads(texto[inicio:fin])
+        subtipo = data.get('subtipo', 'mensaje_programado')
+
+        if subtipo == 'recordatorio_dueno':
+            ok = crear_tarea_agenda(
+                titulo=mensaje[:100],
+                descripcion=data.get('mensaje', mensaje),
+                tipo='tarea',
+                fecha=data.get('ejecutar_en', hoy)[:10],
+                prioridad='media',
+            )
+            return "Listo, te lo recuerdo en tu agenda 🗒️" if ok else "No pude crear el recordatorio."
+
+        telefono = data.get('telefono_destino')
+        if not telefono:
+            return "No identifiqué el número del cliente. ¿Puedes indicar el teléfono?"
+
+        ejecutar_en = data.get('ejecutar_en', hoy)
+        headers = {'X-Agent-Key': VENTAS_API_KEY, 'Content-Type': 'application/json'}
+        body = {
+            'titulo':           f"Sophie: {subtipo}",
+            'descripcion':      data.get('mensaje', ''),
+            'tipo':             'tarea',
+            'fecha':            ejecutar_en[:10],
+            'hora':             ejecutar_en[11:16] if len(ejecutar_en) > 10 else '10:00',
+            'prioridad':        'alta',
+            'tipo_agente':      'sophie_tarea',
+            'telefono_destino': str(telefono),
+            'payload_json':     json.dumps(data, ensure_ascii=False),
+        }
+        r = _req.post(
+            f"{VENTAS_API_URL}/api/agentes/agenda",
+            json=body, headers=headers, timeout=8,
+        )
+        if r.ok:
+            hora_str = ejecutar_en[11:16] if len(ejecutar_en) > 10 else '10:00'
+            return f"Listo, Sophie lo hace el {ejecutar_en[:10]} a las {hora_str} 🗒️"
+        return "No pude programar la tarea. ¿Repites?"
+
+    except Exception as e:
+        logger.error(f"[orquestador] Error creando tarea Sophie: {e}")
+        return f"Error creando la tarea: {e}"
