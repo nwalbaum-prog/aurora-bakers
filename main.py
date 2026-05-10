@@ -51,6 +51,38 @@ app.secret_key = os.environ.get('SECRET_KEY', 'aurora-bakers-crm-secret')
 # Cache en memoria: LID → teléfono (se puede actualizar vía /contacts/sync)
 _lid_cache: dict[str, str] = {}
 
+
+def _cargar_lid_cache_desde_db() -> None:
+    """Carga el LID cache desde aurora-ventas al arrancar."""
+    from tools.ventas_api import get_lid_cache
+    try:
+        cache = get_lid_cache()
+        _lid_cache.update(cache)
+        logger.info(f"[main] LID cache cargado: {len(_lid_cache)} entradas desde aurora-ventas")
+    except Exception as e:
+        logger.warning(f"[main] No se pudo cargar LID cache: {e}")
+
+
+def _procesar_contacts_update(data) -> None:
+    """Extrae mapeos LID→teléfono de contacts.update y los persiste."""
+    from tools.ventas_api import save_lid_cache
+    try:
+        contactos = data if isinstance(data, list) else [data]
+        nuevos: dict[str, str] = {}
+        for c in contactos:
+            jid = c.get('id', '')
+            if '@lid' in jid:
+                lid = jid.split('@')[0]
+                phone = c.get('number') or c.get('phone') or ''
+                if phone:
+                    _lid_cache[lid] = str(phone)
+                    nuevos[lid] = str(phone)
+        if nuevos:
+            save_lid_cache(nuevos)
+            logger.info(f"[main] LID cache: {len(nuevos)} entradas nuevas persistidas")
+    except Exception as e:
+        logger.warning(f"[main] Error procesando contacts.update: {e}")
+
 # Filtro Jinja2 para enumerate
 @app.template_filter('enumerate')
 def jinja_enumerate(iterable):
@@ -88,10 +120,9 @@ def webhook_evolution():
 
         logger.info(f"[evolution] Evento recibido: {event}")
 
-        # Loguear contacts.update para ver si tiene mapeo LID → teléfono
         if event == 'contacts.update':
-            logger.info(f"[evolution] contacts.update data: {str(data.get('data', {}))[:400]}")
-            return jsonify({'status': 'ignored', 'event': event}), 200
+            _procesar_contacts_update(data.get('data', {}))
+            return jsonify({'status': 'processed', 'event': event}), 200
 
         # Solo procesar mensajes entrantes nuevos
         # NOTA: 'messages.set' es sincronización histórica — ignorar
@@ -749,7 +780,8 @@ def cron_reporte_financiero():
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-# Iniciar scheduler al cargar el módulo (compatible con gunicorn --workers 1)
+# Cargar LID cache desde aurora-ventas e iniciar scheduler al cargar el módulo
+_cargar_lid_cache_desde_db()
 iniciar_scheduler()
 
 if __name__ == '__main__':
