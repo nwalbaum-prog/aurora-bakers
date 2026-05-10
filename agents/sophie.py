@@ -1,361 +1,399 @@
 """
-agents/sophie.py — Sophie: agente de ventas (minorista y mayorista)
+agents/sophie.py — Sophie: agente de ventas WhatsApp Aurora Bakers
 
-Maneja conversaciones de clientes por WhatsApp.
-Detecta tipo de cliente, recopila pedido, genera link Jumpseller o guarda pedido mayorista.
-
-Tokens estructurados que puede emitir en respuesta:
-  PEDIDO_CONFIRMADO|nombre|items_json|total|dia|tipo_entrega
-  GENERAR_LINK|nombre_producto|dia_entrega
-  PEDIDO_MAYORISTA|cliente|rut|items_json|total|dia
+Flujo:
+  1. _get_contexto_cliente: obtiene historial del cliente desde aurora-ventas
+  2. ask_sophie: llama Claude con prompt enriquecido
+  3. _extraer_token: parsea token con regex (robusto, busca en cualquier línea)
+  4. _procesar_token: ejecuta la acción del token
+  5. ejecutar_tareas_pendientes: runner de tareas delegadas por el dueño
 """
 from __future__ import annotations
 import json
 import logging
+import re
 from datetime import datetime
 import anthropic
 from tools.jumpseller import get_catalogo_texto, generar_link_compra
-from tools.sheets import append_row, get_records_cached
+from tools.sheets import append_row
 from memoria.contexto import conversaciones
 from memoria.episodica import guardar_episodio, get_contexto_memoria
 import config
 
 logger = logging.getLogger(__name__)
 
+_TOKEN_RE = re.compile(
+    r'^(PEDIDO_CONFIRMADO|PEDIDO_MAYORISTA|GENERAR_LINK)\|.+',
+    re.MULTILINE,
+)
 
-# ── Prompts ───────────────────────────────────────────────────────────────────
+SOPHIE_SYSTEM = """Eres Sophie, la cara de Aurora Bakers (panypasta.cl) en WhatsApp.
+Aurora Bakers es una panadería artesanal de Santiago que hace panes de masa madre.
 
-SOPHIE_SYSTEM = """Eres Sophie, la asistente virtual de Aurora Bakers (panypasta.cl), una panadería artesanal de Santiago que vende panes de masa madre.
+Tu personalidad: cálida, directa, un poco informal. Como el mesón de una panadería artesanal.
+Nunca suenas a call center. Emojis con moderación (máximo 1-2 por mensaje).
+Formato WhatsApp: negrita con *. Máximo 3 párrafos, preferir menos.
 
-Tu rol es ayudar a los clientes a hacer sus pedidos por WhatsApp de forma amigable y eficiente.
+CONTEXTO DEL CLIENTE:
+{contexto_cliente}
 
-PRODUCTOS Y PRECIOS:
+CATÁLOGO ACTUAL:
 {catalogo}
 
 DÍAS DE DESPACHO: martes, miércoles, jueves, viernes y sábado.
+COMUNAS CON DESPACHO: Providencia, Ñuñoa, Santiago Centro, Recoleta, Independencia, Las Condes, Vitacura, La Reina, Macul, San Miguel.
 
-REGLAS IMPORTANTES:
-- Para CLIENTES MINORISTAS (particulares): guía el pedido, confirma los productos y el día de entrega, luego emite el token GENERAR_LINK o PEDIDO_CONFIRMADO.
-- Para CLIENTES MAYORISTAS (negocios con RUT): solicita razón social, RUT, lista de productos y cantidad, luego emite PEDIDO_MAYORISTA.
-- Detecta si es mayorista por: menciona RUT, "pedido para el restaurante/café/local", pide > 10 unidades o pide ciabattas en múltiplos de 6.
-- Usa lenguaje cálido pero conciso. Máximo 3 párrafos por respuesta.
-- Formato WhatsApp: negrita con *, sin markdown complejo.
-- NUNCA inventes precios. Si no hay stock de algo, di "por el momento no tenemos".
+REGLAS:
+- Detecta mayorista por: menciona RUT, pide >10 unidades, dice restaurante/café/local/empresa/factura.
+- Si cliente recurrente, salúdalo por nombre y menciona su último pedido.
+- Si preguntan por su pedido ("¿cuándo llega?", "¿está listo?", "¿ya salió?"), usa el pedido activo del CONTEXTO DEL CLIENTE.
+- NUNCA inventes precios. Si un producto no hay, sugiere la alternativa más parecida.
+- Para pedidos nuevos: confirma el resumen ANTES de registrar.
 
-TOKENS ESTRUCTURADOS (escríbelos en la primera línea, NUNCA en medio de una oración):
-  PEDIDO_CONFIRMADO|nombre_cliente|[{{"producto":"X","cantidad":1}}]|total_clp|dia_entrega|despacho|telefono
-  GENERAR_LINK|nombre_producto|dia_entrega
-  PEDIDO_MAYORISTA|empresa|rut|[{{"producto":"X","cantidad":1}}]|total_clp|dia_entrega
+FLUJO DE PEDIDO (seguir este orden):
+1. Entiende qué quieren y para qué día.
+2. Resume el pedido y confirma: "¿Quedamos así? [resumen breve]"
+3. Solo cuando el cliente responde sí/ok/dale/listo/perfecto → emite el token en una línea propia.
+4. Después del token: cierre amigable con día de entrega confirmado.
 
-{memoria}
-"""
-
-SOPHIE_MAYORISTA_SYSTEM = """Eres Sophie de Aurora Bakers. Estás atendiendo a un CLIENTE MAYORISTA (negocio).
-
-PRECIOS MAYORISTAS:
+PRECIOS MAYORISTAS (solo si es cliente mayorista):
 {precios_mayoristas}
 
-Solicita: empresa, RUT, productos con cantidad, día de despacho.
-Cuando tengas todo, emite: PEDIDO_MAYORISTA|empresa|rut|items_json|total|dia
+TOKENS (emitir en línea propia, solo tras confirmación explícita del cliente):
+PEDIDO_CONFIRMADO|nombre|[{{"producto":"X","cantidad":1,"precio":N}}]|total|dia|tipo_entrega|telefono
+PEDIDO_MAYORISTA|empresa|rut|[{{"producto":"X","cantidad":1,"precio":N}}]|total|dia
+GENERAR_LINK|nombre_producto|dia_entrega
 
 {memoria}
 """
 
 
-# ── Función principal ─────────────────────────────────────────────────────────
-
 def ask_sophie(user_id: str, mensaje: str, canal: str = 'whatsapp') -> str:
-    """
-    Procesa un mensaje de cliente y retorna la respuesta de Sophie.
-    Maneja el estado de conversación vía ConversacionesStore.
-    """
-    # Determinar tipo de conversación
+    """Procesa un mensaje de cliente y retorna la respuesta de Sophie."""
     estado = conversaciones.get(user_id)
     tipo   = estado.tipo if estado else _detectar_tipo(mensaje)
-
-    # Obtener o crear estado
     estado = conversaciones.get_or_create(user_id, tipo)
-
-    # Agregar mensaje del usuario
     conversaciones.append_mensaje(user_id, 'user', mensaje)
 
     try:
-        # Construir prompt de sistema
-        catalogo = get_catalogo_texto()
-        memoria  = get_contexto_memoria('sophie', limit=2)
+        catalogo          = _get_catalogo_con_fallback()
+        memoria           = get_contexto_memoria('sophie', limit=2)
+        contexto_cliente  = _get_contexto_cliente(user_id)
+        precios_mayoristas = _formato_precios_mayoristas()
 
-        if tipo == 'mayorista':
-            precios = _formato_precios_mayoristas()
-            system  = SOPHIE_MAYORISTA_SYSTEM.format(
-                precios_mayoristas=precios,
-                memoria=memoria,
-            )
-        else:
-            system = SOPHIE_SYSTEM.format(
-                catalogo=catalogo,
-                memoria=memoria,
-            )
+        system = SOPHIE_SYSTEM.format(
+            catalogo=catalogo,
+            memoria=memoria,
+            contexto_cliente=contexto_cliente,
+            precios_mayoristas=precios_mayoristas,
+        )
 
         mensajes = conversaciones.get_mensajes(user_id)
-
-        cliente = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-        resp = cliente.messages.create(
+        cliente_ai = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        resp = cliente_ai.messages.create(
             model=config.MODEL,
-            max_tokens=500,
+            max_tokens=600,
             system=system,
             messages=mensajes,
         )
         respuesta_raw = resp.content[0].text
 
-        # Procesar tokens estructurados
-        respuesta_limpia = _procesar_tokens_sophie(user_id, respuesta_raw, tipo)
+        token_line, respuesta_limpia = _extraer_token(respuesta_raw)
 
-        # Guardar respuesta del asistente
+        if token_line:
+            respuesta_limpia = _procesar_token(user_id, token_line, respuesta_limpia, tipo)
+
         conversaciones.append_mensaje(user_id, 'assistant', respuesta_limpia)
-
         guardar_episodio(
             agente='sophie',
             pregunta=mensaje[:200],
             respuesta_resumen=respuesta_limpia[:300],
             resultado='ok',
         )
-
         return respuesta_limpia
 
     except Exception as e:
         logger.error(f"[sophie] Error: {e}")
-        return "Lo siento, tuve un problema técnico. ¿Puedes repetir tu consulta? 🙏"
+        return "Lo siento, tuve un problema técnico. ¿Puedes repetir? 🙏"
 
 
-# ── Procesamiento de tokens ───────────────────────────────────────────────────
+# ── Helpers de contexto ───────────────────────────────────────────────────────
 
-def _procesar_tokens_sophie(user_id: str, respuesta: str, tipo: str) -> str:
+def _get_contexto_cliente(telefono: str) -> str:
+    """Obtiene historial del cliente desde aurora-ventas para personalizar."""
+    try:
+        from tools.ventas_api import get_pedidos_cliente
+        data = get_pedidos_cliente(telefono)
+        cliente = data.get('cliente')
+        pedidos = data.get('pedidos', [])
+
+        if not cliente:
+            return 'Cliente nuevo (sin historial previo).'
+
+        nombre        = cliente.get('nombre', 'Cliente')
+        total_pedidos = cliente.get('total_pedidos', 0)
+        tipo          = cliente.get('tipo', 'CLIENTE')
+
+        lineas = [f"Cliente: {nombre} ({tipo.lower()}, {total_pedidos} pedidos previos)"]
+
+        activos   = [p for p in pedidos if 'PENDIENTE' in p.get('estado', '').upper()]
+        recientes = [p for p in pedidos if 'PENDIENTE' not in p.get('estado', '').upper()]
+
+        if activos:
+            p = activos[0]
+            lineas.append(
+                f"Pedido activo: {p.get('items','?')} — {p.get('estado','')} — "
+                f"entrega {p.get('fecha_entrega','?')}"
+            )
+        elif recientes:
+            p = recientes[0]
+            lineas.append(f"Último pedido: {p.get('items','?')} ({p.get('fecha_entrega','?')})")
+
+        return '\n'.join(lineas)
+    except Exception:
+        return 'Historial no disponible.'
+
+
+def _get_catalogo_con_fallback() -> str:
+    """Catálogo desde Jumpseller; si falla usa config.RECETAS."""
+    try:
+        catalogo = get_catalogo_texto()
+        if 'no disponible' not in catalogo.lower() and len(catalogo) > 30:
+            return catalogo
+    except Exception:
+        pass
+    lineas = ['*Catálogo Aurora Bakers:*']
+    for codigo, r in config.RECETAS.items():
+        lineas.append(f"✅ {r['nombre']}")
+    return '\n'.join(lineas)
+
+
+# ── Token parser ──────────────────────────────────────────────────────────────
+
+def _extraer_token(respuesta: str) -> tuple[str, str]:
     """
-    Detecta y ejecuta tokens estructurados en la respuesta de Claude.
-    Retorna el texto limpio (sin la línea del token).
+    Busca un token estructurado en cualquier línea del response.
+    Retorna (token_line, texto_limpio).
     """
-    lineas = respuesta.strip().split('\n')
-    primera = lineas[0].strip()
+    match = _TOKEN_RE.search(respuesta)
+    if not match:
+        return '', respuesta
+    token_line    = match.group(0)
+    texto_antes   = respuesta[:match.start()].strip()
+    texto_despues = respuesta[match.end():].strip()
+    texto_limpio  = '\n'.join(filter(None, [texto_antes, texto_despues]))
+    return token_line, texto_limpio
 
-    if primera.startswith('PEDIDO_CONFIRMADO|'):
-        _manejar_pedido_confirmado(user_id, primera)
-        return '\n'.join(lineas[1:]).strip() or "✅ Pedido registrado. ¡Gracias!"
 
-    if primera.startswith('GENERAR_LINK|'):
-        partes = primera.split('|')
+def _procesar_token(user_id: str, token_line: str, texto: str, tipo: str) -> str:
+    """Despacha el token al handler correcto."""
+    if token_line.startswith('PEDIDO_CONFIRMADO|'):
+        _manejar_pedido_confirmado(user_id, token_line)
+        return texto or "✅ ¡Pedido registrado! Nos vemos el día de entrega 🍞"
+
+    if token_line.startswith('GENERAR_LINK|'):
+        partes = token_line.split('|')
         if len(partes) >= 3:
-            nombre_producto = partes[1].strip()
-            dia_entrega     = partes[2].strip()
-            link = generar_link_compra(nombre_producto, dia_entrega)
-            texto_restante = '\n'.join(lineas[1:]).strip()
+            link = generar_link_compra(partes[1].strip(), partes[2].strip())
             if link:
-                return f"{texto_restante}\n\n🔗 {link}".strip()
-        return '\n'.join(lineas[1:]).strip()
+                return f"{texto}\n\n🔗 {link}".strip()
+        return texto
 
-    if primera.startswith('PEDIDO_MAYORISTA|'):
-        _manejar_pedido_mayorista(user_id, primera)
-        return '\n'.join(lineas[1:]).strip() or "✅ Pedido mayorista registrado. ¡Gracias!"
+    if token_line.startswith('PEDIDO_MAYORISTA|'):
+        _manejar_pedido_mayorista(user_id, token_line)
+        return texto or "✅ Pedido mayorista registrado. Te enviamos la factura pronto 🍞"
 
-    return respuesta
+    return texto
 
+
+# ── Handlers de pedidos ───────────────────────────────────────────────────────
 
 def _manejar_pedido_confirmado(user_id: str, token: str) -> None:
-    """Guarda un pedido minorista en Sheets Y en aurora-ventas."""
+    """Guarda pedido minorista en Sheets y aurora-ventas."""
     try:
         partes = token.split('|')
         if len(partes) < 7:
             return
+        nombre       = partes[1].strip()
+        items_raw    = partes[2].strip()
+        total        = _parse_monto(partes[3])
+        dia          = partes[4].strip()
+        tipo_entrega = partes[5].strip()
+        telefono     = partes[6].strip() if len(partes) > 6 else user_id
 
-        nombre        = partes[1].strip()
-        items_raw     = partes[2].strip()
-        total         = _parse_monto(partes[3])
-        dia           = partes[4].strip()
-        tipo_entrega  = partes[5].strip()
-        telefono      = partes[6].strip() if len(partes) > 6 else user_id
-
-        items = json.loads(items_raw) if items_raw.startswith('[') else []
+        items     = json.loads(items_raw) if items_raw.startswith('[') else []
         items_str = ', '.join(f"{i.get('cantidad',1)}x {i.get('producto','')}" for i in items)
+        fecha     = datetime.now().strftime('%Y-%m-%d %H:%M')
 
-        fecha = datetime.now().strftime('%Y-%m-%d %H:%M')
-
-        # 1. Guardar en Google Sheets (flujo original)
         append_row(config.SHEET_PEDIDOS, [
             fecha, nombre, telefono, items_str, total, dia, tipo_entrega, 'pendiente', 'whatsapp'
         ])
         append_row(config.SHEET_INGRESOS, [fecha, total, f'Pedido {nombre}', 'whatsapp'])
-
-        # 2. Sincronizar con aurora-ventas
-        _sincronizar_venta_aurora(
-            nombre=nombre,
-            telefono=telefono,
-            items=items,
-            total=total,
-            dia_entrega=dia,
-            tipo_entrega=tipo_entrega,
-            segmento='CLIENTE',
-        )
-
+        _sincronizar_venta_aurora(nombre, telefono, items, total, dia, tipo_entrega, 'CLIENTE')
         conversaciones.marcar_pedido_guardado(user_id)
         logger.info(f"[sophie] Pedido confirmado: {nombre} ${total}")
-
     except Exception as e:
         logger.error(f"[sophie] Error guardando pedido confirmado: {e}")
 
 
 def _manejar_pedido_mayorista(user_id: str, token: str) -> None:
-    """Guarda un pedido mayorista en Sheets Y en aurora-ventas."""
+    """Guarda pedido mayorista en Sheets y aurora-ventas."""
     try:
-        partes = token.split('|')
+        partes    = token.split('|')
         if len(partes) < 5:
             return
-
         empresa   = partes[1].strip()
         rut       = partes[2].strip()
         items_raw = partes[3].strip()
         total     = _parse_monto(partes[4])
         dia       = partes[5].strip() if len(partes) > 5 else ''
 
-        items = json.loads(items_raw) if items_raw.startswith('[') else []
+        items     = json.loads(items_raw) if items_raw.startswith('[') else []
         items_str = ', '.join(f"{i.get('cantidad',1)}x {i.get('producto','')}" for i in items)
+        fecha     = datetime.now().strftime('%Y-%m-%d %H:%M')
 
-        fecha = datetime.now().strftime('%Y-%m-%d %H:%M')
-
-        # 1. Guardar en Google Sheets (flujo original)
         append_row(config.SHEET_PEDIDOS_MAYORISTAS, [
             fecha, empresa, rut, items_str, total, dia, 'pendiente'
         ])
         append_row(config.SHEET_INGRESOS, [fecha, total, f'Mayorista {empresa}', 'whatsapp'])
-
-        # 2. Sincronizar con aurora-ventas
-        _sincronizar_venta_aurora(
-            nombre=empresa,
-            telefono=rut,   # usamos el RUT como identificador del mayorista
-            items=items,
-            total=total,
-            dia_entrega=dia,
-            tipo_entrega='despacho',
-            segmento='HORECA',
-            notas=f'RUT: {rut}',
-        )
-
+        _sincronizar_venta_aurora(empresa, rut, items, total, dia, 'despacho', 'HORECA',
+                                   notas=f'RUT: {rut}')
         conversaciones.marcar_pedido_guardado(user_id)
         logger.info(f"[sophie] Pedido mayorista: {empresa} ${total}")
-
     except Exception as e:
         logger.error(f"[sophie] Error guardando pedido mayorista: {e}")
 
 
-# ── Sincronización con aurora-ventas ─────────────────────────────────────────
+# ── Task runner ───────────────────────────────────────────────────────────────
+
+def ejecutar_tareas_pendientes() -> int:
+    """Revisa y ejecuta tareas sophie_tarea vencidas. Retorna N ejecutadas."""
+    try:
+        from tools.ventas_api import get_tareas_sophie_pendientes, marcar_tarea_completada
+        from tools.whatsapp import send_whatsapp_safe
+
+        tareas     = get_tareas_sophie_pendientes()
+        ejecutadas = 0
+
+        for tarea in tareas:
+            try:
+                payload  = json.loads(tarea.get('payload_json') or '{}')
+                subtipo  = payload.get('subtipo', 'mensaje_programado')
+                telefono = tarea.get('telefono_destino') or payload.get('telefono_destino', '')
+                mensaje  = tarea.get('descripcion') or payload.get('mensaje', '')
+
+                if not telefono or not mensaje:
+                    marcar_tarea_completada(tarea['id'], 'error_datos')
+                    continue
+
+                if subtipo == 'seguimiento_condicional':
+                    if _hubo_respuesta_reciente(telefono, horas=48):
+                        marcar_tarea_completada(tarea['id'], 'cancelada_respondio')
+                        continue
+
+                ok = send_whatsapp_safe(telefono, mensaje)
+                marcar_tarea_completada(tarea['id'], 'ok' if ok else 'error_envio')
+                if ok:
+                    ejecutadas += 1
+                    logger.info(f"[sophie] Tarea ejecutada: id={tarea['id']} → {telefono}")
+
+            except Exception as e:
+                logger.error(f"[sophie] Error ejecutando tarea {tarea.get('id')}: {e}")
+
+        return ejecutadas
+    except Exception as e:
+        logger.error(f"[sophie] Error en task runner: {e}")
+        return 0
+
+
+def _hubo_respuesta_reciente(telefono: str, horas: int = 48) -> bool:
+    """Verifica si hubo actividad de este número en las últimas N horas."""
+    try:
+        from tools.ventas_api import get_conversacion
+        from datetime import timedelta
+        data = get_conversacion(telefono)
+        if not data or not data.get('updated_at'):
+            return False
+        dt = datetime.fromisoformat(data['updated_at'])
+        return datetime.now() - dt < timedelta(hours=horas)
+    except Exception:
+        return False
+
+
+# ── Sincronización aurora-ventas ──────────────────────────────────────────────
 
 def _sincronizar_venta_aurora(
-    nombre: str,
-    telefono: str,
-    items: list,
-    total: float,
-    dia_entrega: str,
-    tipo_entrega: str,
-    segmento: str = 'CLIENTE',
-    notas: str = '',
+    nombre: str, telefono: str, items: list, total: float,
+    dia_entrega: str, tipo_entrega: str,
+    segmento: str = 'CLIENTE', notas: str = '',
 ) -> None:
-    """
-    Crea o actualiza el cliente y la venta en aurora-ventas via API.
-    Falla silenciosamente si el sistema de ventas no está disponible.
-    """
+    """Crea o actualiza el cliente y la venta en aurora-ventas via API."""
     try:
         import requests as _req
         from tools.ventas_api import VENTAS_API_URL, VENTAS_API_KEY, get_clientes
 
         headers = {'X-Agent-Key': VENTAS_API_KEY, 'Content-Type': 'application/json'}
 
-        # 1. Buscar o crear cliente
+        # Buscar o crear cliente
         cliente_id = None
-        clientes = get_clientes(q=nombre)
-        if clientes:
-            # Buscar por teléfono exacto o nombre
-            for c in clientes:
-                tel_c = str(c.get('telefono', '')).replace(' ', '').replace('-', '')
-                tel_n = str(telefono).replace(' ', '').replace('-', '')
-                if tel_c == tel_n or c.get('nombre', '').lower() == nombre.lower():
-                    cliente_id = c.get('id')
-                    break
+        clientes   = get_clientes(q=nombre)
+        for c in clientes:
+            tel_c = str(c.get('telefono', '')).replace(' ', '').replace('-', '')
+            tel_n = str(telefono).replace(' ', '').replace('-', '')
+            if tel_c == tel_n or c.get('nombre', '').lower() == nombre.lower():
+                cliente_id = c.get('id')
+                break
 
         if not cliente_id:
-            # Crear nuevo cliente
-            resp = _req.post(
+            r = _req.post(
                 f"{VENTAS_API_URL}/api/clientes",
-                json={
-                    'nombre':   nombre,
-                    'telefono': telefono,
-                    'segmento': segmento,
-                    'canal':    'whatsapp',
-                    'activo':   True,
-                },
-                headers=headers,
-                timeout=8,
+                json={'nombre': nombre, 'telefono': telefono,
+                      'tipo': segmento, 'canal': 'whatsapp', 'activo': True},
+                headers=headers, timeout=8,
             )
-            if resp.ok:
-                cliente_id = resp.json().get('id')
-                logger.info(f"[sophie→ventas] Cliente creado: {nombre} (id={cliente_id})")
-            else:
-                logger.warning(f"[sophie→ventas] No se pudo crear cliente: {resp.text[:100]}")
+            if r.ok:
+                cliente_id = r.json().get('id')
 
-        # 2. Crear la venta con sus items
-        detalle = []
-        for item in items:
-            detalle.append({
-                'descripcion': item.get('producto', ''),
-                'cantidad':    float(item.get('cantidad', 1)),
-                'precio':      float(item.get('precio', total / max(len(items), 1))),
-            })
-
-        if not detalle:
-            # Si no hay detalle estructurado, crear un item genérico
-            detalle = [{'descripcion': 'Pedido WhatsApp', 'cantidad': 1, 'precio': total}]
+        # Crear venta (items como notas — WhatsApp orders no tienen producto_id)
+        items_str = ', '.join(
+            f"{i.get('cantidad',1)}x {i.get('producto','')}" for i in items
+        ) or 'Pedido WhatsApp'
 
         venta_body = {
-            'cliente_id':   cliente_id,
-            'total':        total,
-            'forma_pago':   'pendiente',
-            'estado':       'pendiente',
-            'canal':        'whatsapp',
-            'fecha_entrega': dia_entrega,
-            'tipo_entrega': tipo_entrega,
-            'notas':        notas or f'Pedido via WhatsApp Sophie',
-            'detalle':      detalle,
+            'cliente_id':      cliente_id,
+            'canal':           'whatsapp',
+            'total':           total,
+            'notas':           notas or items_str,
+            'fecha_despacho':  dia_entrega,
+            'con_despacho':    1 if tipo_entrega == 'despacho' else 0,
+            'tipo_cliente':    segmento,
+            'estado_pago':     'PENDIENTE',
+            'estado_despacho': 'PENDIENTE',
+            'items':           [],  # sin FK de producto — solo notas
         }
-
-        resp = _req.post(
+        r = _req.post(
             f"{VENTAS_API_URL}/api/ventas",
-            json=venta_body,
-            headers=headers,
-            timeout=8,
+            json=venta_body, headers=headers, timeout=8,
         )
-        if resp.ok:
-            venta_id = resp.json().get('id')
-            logger.info(f"[sophie→ventas] Venta creada: id={venta_id} ${total} cliente={nombre}")
+        if r.ok:
+            logger.info(f"[sophie→ventas] Venta creada: ${total} cliente={nombre}")
         else:
-            logger.warning(f"[sophie→ventas] No se pudo crear venta: {resp.text[:100]}")
+            logger.warning(f"[sophie→ventas] No se pudo crear venta: {r.text[:100]}")
 
     except Exception as e:
-        # Falla silenciosa: Google Sheets ya guardó el pedido
-        logger.warning(f"[sophie→ventas] aurora-ventas no disponible o error: {e}")
+        logger.warning(f"[sophie→ventas] aurora-ventas no disponible: {e}")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _detectar_tipo(mensaje: str) -> str:
-    """Heurística rápida para detectar si es mayorista."""
     msg_lower = mensaje.lower()
-    señales_mayorista = ['rut', 'restaurante', 'café', 'cafe', 'local', 'negocio',
-                         'empresa', 'factura', 'mayorista', 'pedido grande']
-    for señal in señales_mayorista:
-        if señal in msg_lower:
-            return 'mayorista'
-    return 'minorista'
+    señales = ['rut', 'restaurante', 'café', 'cafe', 'local', 'negocio',
+               'empresa', 'factura', 'mayorista', 'pedido grande']
+    return 'mayorista' if any(s in msg_lower for s in señales) else 'minorista'
 
 
 def _parse_monto(valor: str) -> float:
-    """Convierte string de monto CLP a float."""
     try:
         limpio = str(valor).replace('$', '').replace('.', '').replace(',', '.').strip()
         return float(limpio)
