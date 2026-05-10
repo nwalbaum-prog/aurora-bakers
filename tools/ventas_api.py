@@ -450,3 +450,120 @@ def get_contexto_ventas_texto() -> str:
         lineas.append(f"• Clientes inactivos (+21 días): {len(inact)}")
 
     return '\n'.join(lineas)
+
+
+# ── LID cache persistente ─────────────────────────────────────────────────────
+
+def get_lid_cache() -> dict[str, str]:
+    """Carga el mapa LID→teléfono desde aurora-ventas."""
+    try:
+        resp = requests.get(
+            f"{_get_url()}/api/agentes/lid-cache",
+            headers=_headers(), timeout=5,
+        )
+        if resp.ok:
+            return resp.json()
+    except Exception as e:
+        logger.warning(f"[ventas_api] LID cache no disponible: {e}")
+    return {}
+
+
+def save_lid_cache(mapping: dict[str, str]) -> bool:
+    """Persiste nuevos mapeos LID→teléfono en aurora-ventas."""
+    try:
+        resp = requests.post(
+            f"{_get_url()}/api/agentes/lid-cache",
+            json=mapping, headers=_headers(), timeout=5,
+        )
+        return resp.ok
+    except Exception as e:
+        logger.warning(f"[ventas_api] Error guardando LID cache: {e}")
+        return False
+
+
+# ── Conversaciones persistentes ───────────────────────────────────────────────
+
+def get_conversacion(telefono: str) -> dict | None:
+    """Carga el estado de conversación activa desde aurora-ventas."""
+    try:
+        resp = requests.get(
+            f"{_get_url()}/api/agentes/conversaciones/{telefono}",
+            headers=_headers(), timeout=5,
+        )
+        if resp.ok:
+            return resp.json()
+    except Exception as e:
+        logger.debug(f"[ventas_api] conversacion no disponible: {e}")
+    return None
+
+
+def save_conversacion(telefono: str, data: dict) -> bool:
+    """Persiste el estado de una conversación activa en aurora-ventas."""
+    try:
+        resp = requests.post(
+            f"{_get_url()}/api/agentes/conversaciones/{telefono}",
+            json=data, headers=_headers(), timeout=5,
+        )
+        return resp.ok
+    except Exception as e:
+        logger.warning(f"[ventas_api] Error guardando conversacion: {e}")
+        return False
+
+
+def delete_conversacion(telefono: str) -> bool:
+    """Elimina una conversación terminada de aurora-ventas."""
+    try:
+        resp = requests.delete(
+            f"{_get_url()}/api/agentes/conversaciones/{telefono}",
+            headers=_headers(), timeout=5,
+        )
+        return resp.ok
+    except Exception:
+        return False
+
+
+# ── Pedidos por cliente ───────────────────────────────────────────────────────
+
+def get_pedidos_cliente(telefono: str) -> dict:
+    """Retorna pedidos e info del cliente por teléfono. Fallback: dict vacío."""
+    try:
+        resp = requests.get(
+            f"{_get_url()}/api/agentes/pedidos-cliente",
+            params={'telefono': telefono},
+            headers=_headers(), timeout=5,
+        )
+        if resp.ok:
+            return resp.json()
+    except Exception as e:
+        logger.debug(f"[ventas_api] pedidos-cliente no disponible: {e}")
+    return {'pedidos': [], 'cliente': None}
+
+
+# ── Tareas Sophie ─────────────────────────────────────────────────────────────
+
+def get_tareas_sophie_pendientes() -> list[dict]:
+    """Retorna tareas de Sophie cuya fecha+hora ya llegó."""
+    try:
+        resp = requests.get(
+            f"{_get_url()}/api/agentes/agenda/sophie-pendientes",
+            headers=_headers(), timeout=5,
+        )
+        if resp.ok:
+            return resp.json().get('tareas', [])
+    except Exception as e:
+        logger.debug(f"[ventas_api] tareas sophie no disponible: {e}")
+    return []
+
+
+def marcar_tarea_completada(tarea_id: int, resultado: str = 'ok') -> bool:
+    """Marca una tarea de Sophie como completada."""
+    try:
+        resp = requests.post(
+            f"{_get_url()}/api/agentes/agenda/{tarea_id}/completar",
+            json={'resultado': resultado},
+            headers=_headers(), timeout=5,
+        )
+        return resp.ok
+    except Exception as e:
+        logger.error(f"[ventas_api] Error marcando tarea {tarea_id}: {e}")
+        return False

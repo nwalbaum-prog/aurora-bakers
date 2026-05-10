@@ -4,7 +4,7 @@ config.py — Todas las constantes de Aurora Bakers extraídas de main.py
 import os
 
 # ── Modelo Claude ────────────────────────────────────────────────────────────
-MODEL = 'claude-sonnet-4-20250514'  # NO CAMBIAR
+MODEL = 'claude-sonnet-4-6'
 
 # ── Entorno ──────────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY     = os.environ.get('ANTHROPIC_API_KEY', '')
