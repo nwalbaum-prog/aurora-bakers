@@ -102,6 +102,17 @@ def _tarea_recordatorio_produccion() -> None:
         logger.error(f"[cron] recordatorio_produccion error: {e}")
 
 
+def _tarea_sophie_runner() -> None:
+    """Cada 30 min — Ejecuta tareas programadas de Sophie."""
+    try:
+        from agents.sophie import ejecutar_tareas_pendientes
+        n = ejecutar_tareas_pendientes()
+        if n > 0:
+            logger.info(f"[cron] sophie_runner: {n} tarea(s) ejecutada(s)")
+    except Exception as e:
+        logger.error(f"[cron] sophie_runner error: {e}")
+
+
 def _tarea_reactivacion() -> None:
     """Martes y jueves 10:00 — Mensajes de reactivación a clientes inactivos."""
     try:
@@ -196,6 +207,14 @@ def iniciar_scheduler() -> None:
         _tarea_recordatorio_produccion,
         CronTrigger(day_of_week='mon-fri', hour=16, minute=0, timezone=TZ),
         id='recordatorio_produccion',
+        replace_existing=True,
+    )
+
+    # Cada 30 min — ejecutar tareas programadas de Sophie
+    _scheduler.add_job(
+        _tarea_sophie_runner,
+        CronTrigger(minute='*/30', timezone=TZ),
+        id='sophie_tareas',
         replace_existing=True,
     )
 
