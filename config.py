@@ -23,8 +23,9 @@ META_PAGE_ACCESS_TOKEN = os.environ.get('META_PAGE_ACCESS_TOKEN', '')   # legacy
 WHATSAPP_PHONE_NUMBER_ID = os.environ.get('WHATSAPP_PHONE_NUMBER_ID', '')  # legacy
 
 # ── Evolution API (reemplaza Meta Cloud API) ─────────────────────────────────
-EVOLUTION_API_URL  = os.environ.get('EVOLUTION_API_URL', 'http://localhost:8081')
-EVOLUTION_API_KEY  = os.environ.get('EVOLUTION_API_KEY', '')
+# Default apunta al túnel trycloudflare activo; sobrescribir con EVOLUTION_API_URL en Railway.
+EVOLUTION_API_URL  = os.environ.get('EVOLUTION_API_URL', 'https://bizrate-specifications-hour-parliamentary.trycloudflare.com')
+EVOLUTION_API_KEY  = os.environ.get('EVOLUTION_API_KEY', 'aurora_bakers_evolution_2024')
 EVOLUTION_INSTANCE = os.environ.get('EVOLUTION_INSTANCE', 'aurora-bakers')
 
 # Mapeo LID → número de teléfono (WhatsApp multi-device)
@@ -45,7 +46,8 @@ SMTP_PASS    = os.environ.get('SMTP_PASS', '')
 CRON_SECRET  = os.environ.get('CRON_SECRET', 'aurora_cron_2024')
 
 # ── Aurora Ventas (fuente única de datos) ────────────────────────────────────
-VENTAS_API_URL = os.environ.get('VENTAS_API_URL', 'http://127.0.0.1:5000')
+# Default apunta al túnel trycloudflare activo; sobrescribir con VENTAS_API_URL en Railway.
+VENTAS_API_URL = os.environ.get('VENTAS_API_URL', 'https://northern-implies-democrat-lindsay.trycloudflare.com')
 VENTAS_API_KEY = os.environ.get('VENTAS_API_KEY', 'aurora_agent_2024')
 
 # ── Hojas CRM ────────────────────────────────────────────────────────────────
