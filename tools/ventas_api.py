@@ -21,11 +21,8 @@ from tools.retry import con_reintento
 logger = logging.getLogger(__name__)
 
 import config as _cfg_module
-VENTAS_API_URL = os.environ.get('VENTAS_API_URL', 'http://127.0.0.1:5000')
-VENTAS_API_KEY = os.environ.get('VENTAS_API_KEY', 'aurora_agent_2024')
-
-def _get_url():
-    return getattr(_cfg_module, 'VENTAS_API_URL', VENTAS_API_URL)
+VENTAS_API_URL = _cfg_module.VENTAS_API_URL
+VENTAS_API_KEY = _cfg_module.VENTAS_API_KEY
 
 _TIMEOUT = 10  # segundos
 
