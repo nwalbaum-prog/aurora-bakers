@@ -24,7 +24,7 @@ WHATSAPP_PHONE_NUMBER_ID = os.environ.get('WHATSAPP_PHONE_NUMBER_ID', '')  # leg
 
 # ── Evolution API (reemplaza Meta Cloud API) ─────────────────────────────────
 # Default apunta al túnel trycloudflare activo; sobrescribir con EVOLUTION_API_URL en Railway.
-EVOLUTION_API_URL  = os.environ.get('EVOLUTION_API_URL', 'https://bizrate-specifications-hour-parliamentary.trycloudflare.com')
+EVOLUTION_API_URL  = os.environ.get('EVOLUTION_API_URL', 'https://bath-wishing-handed-maker.trycloudflare.com')
 EVOLUTION_API_KEY  = os.environ.get('EVOLUTION_API_KEY', 'aurora_bakers_evolution_2024')
 EVOLUTION_INSTANCE = os.environ.get('EVOLUTION_INSTANCE', 'aurora-bakers')
 
@@ -47,7 +47,7 @@ CRON_SECRET  = os.environ.get('CRON_SECRET', 'aurora_cron_2024')
 
 # ── Aurora Ventas (fuente única de datos) ────────────────────────────────────
 # Default apunta al túnel trycloudflare activo; sobrescribir con VENTAS_API_URL en Railway.
-VENTAS_API_URL = os.environ.get('VENTAS_API_URL', 'https://northern-implies-democrat-lindsay.trycloudflare.com')
+VENTAS_API_URL = os.environ.get('VENTAS_API_URL', 'https://query-touched-process-looksmart.trycloudflare.com')
 VENTAS_API_KEY = os.environ.get('VENTAS_API_KEY', 'aurora_agent_2024')
 
 # ── Hojas CRM ────────────────────────────────────────────────────────────────
