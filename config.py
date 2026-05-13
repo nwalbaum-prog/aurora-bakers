@@ -22,9 +22,18 @@ META_VERIFY_TOKEN     = os.environ.get('META_VERIFY_TOKEN', 'aurora_bakers_2024'
 META_PAGE_ACCESS_TOKEN = os.environ.get('META_PAGE_ACCESS_TOKEN', '')   # legacy
 WHATSAPP_PHONE_NUMBER_ID = os.environ.get('WHATSAPP_PHONE_NUMBER_ID', '')  # legacy
 
+# ── Detección Railway ─────────────────────────────────────────────────────────
+_ON_RAILWAY = bool(os.environ.get('RAILWAY_ENVIRONMENT') or os.environ.get('RAILWAY_SERVICE_ID'))
+
+def _tunnel_or_local(env_var: str, tunnel_url: str, local_default: str) -> str:
+    """En Railway, usa tunnel_url cuando el env var apunta a localhost."""
+    raw = os.environ.get(env_var, '')
+    if _ON_RAILWAY and (not raw or 'localhost' in raw or '127.0.0.1' in raw):
+        return tunnel_url
+    return raw or local_default
+
 # ── Evolution API (reemplaza Meta Cloud API) ─────────────────────────────────
-# Default apunta al túnel trycloudflare activo; sobrescribir con EVOLUTION_API_URL en Railway.
-EVOLUTION_API_URL  = os.environ.get('EVOLUTION_API_URL', 'https://bath-wishing-handed-maker.trycloudflare.com')
+EVOLUTION_API_URL  = _tunnel_or_local('EVOLUTION_API_URL', 'https://bath-wishing-handed-maker.trycloudflare.com', 'http://localhost:8081')
 EVOLUTION_API_KEY  = os.environ.get('EVOLUTION_API_KEY', 'aurora_bakers_evolution_2024')
 EVOLUTION_INSTANCE = os.environ.get('EVOLUTION_INSTANCE', 'aurora-bakers')
 
@@ -46,8 +55,7 @@ SMTP_PASS    = os.environ.get('SMTP_PASS', '')
 CRON_SECRET  = os.environ.get('CRON_SECRET', 'aurora_cron_2024')
 
 # ── Aurora Ventas (fuente única de datos) ────────────────────────────────────
-# Default apunta al túnel trycloudflare activo; sobrescribir con VENTAS_API_URL en Railway.
-VENTAS_API_URL = os.environ.get('VENTAS_API_URL', 'https://query-touched-process-looksmart.trycloudflare.com')
+VENTAS_API_URL = _tunnel_or_local('VENTAS_API_URL', 'https://query-touched-process-looksmart.trycloudflare.com', 'http://127.0.0.1:5000')
 VENTAS_API_KEY = os.environ.get('VENTAS_API_KEY', 'aurora_agent_2024')
 
 # ── Hojas CRM ────────────────────────────────────────────────────────────────
