@@ -100,6 +100,7 @@ def health():
         'ts': datetime.now().isoformat(),
         'ventas_api': ventas_ok,
         'ventas_url': _vurl,
+        'evolution_url': config.EVOLUTION_API_URL,
         'cron': get_proxima_ejecucion(),
     })
 
