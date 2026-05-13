@@ -51,6 +51,10 @@ app.secret_key = os.environ.get('SECRET_KEY', 'aurora-bakers-crm-secret')
 # Cache en memoria: LID → teléfono (se puede actualizar vía /contacts/sync)
 _lid_cache: dict[str, str] = {}
 
+# Deduplicación de mensajes: evita procesar el mismo message_id dos veces
+# TTL implícito: se limpia cuando el set supera 500 entradas
+_seen_message_ids: set[str] = set()
+
 
 def _cargar_lid_cache_desde_db() -> None:
     """Carga el LID cache desde aurora-ventas al arrancar."""
@@ -164,6 +168,16 @@ def webhook_evolution():
         if msg_ts and (time.time() - int(msg_ts)) > 300:
             logger.info(f"[evolution] Mensaje antiguo ignorado (ts={msg_ts}) de {from_}")
             return jsonify({'status': 'old_message'}), 200
+
+        # Deduplicación por message ID — evita respuesta doble si Evolution reintenta webhook
+        msg_id = key.get('id', '')
+        if msg_id and msg_id in _seen_message_ids:
+            logger.info(f"[evolution] Mensaje duplicado ignorado id={msg_id}")
+            return jsonify({'status': 'duplicate'}), 200
+        if msg_id:
+            _seen_message_ids.add(msg_id)
+            if len(_seen_message_ids) > 500:  # limpieza periódica
+                _seen_message_ids.clear()
 
         # Extraer texto (distintos tipos de mensaje)
         message_obj = msg_data.get('message', {})

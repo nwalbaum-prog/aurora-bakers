@@ -27,6 +27,10 @@ VENTAS_API_KEY = _cfg_module.VENTAS_API_KEY
 _TIMEOUT = 10  # segundos
 
 
+def _get_url() -> str:
+    return _cfg_module.VENTAS_API_URL
+
+
 def _headers() -> dict:
     return {'X-Agent-Key': VENTAS_API_KEY, 'Accept': 'application/json'}
 

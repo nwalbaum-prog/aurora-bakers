@@ -14,7 +14,9 @@ import config
 logger = logging.getLogger(__name__)
 
 VENTAS_API_URL = config.VENTAS_API_URL if hasattr(config, 'VENTAS_API_URL') else 'http://127.0.0.1:5000'
+VENTAS_API_KEY = config.VENTAS_API_KEY if hasattr(config, 'VENTAS_API_KEY') else 'aurora_agent_2024'
 _TIMEOUT = 5
+_HEADERS = {'X-Agent-Key': VENTAS_API_KEY}
 
 
 def guardar_episodio(
@@ -39,6 +41,7 @@ def guardar_episodio(
                 'resultado': resultado,
                 'aprendizaje': aprendizaje,
             },
+            headers=_HEADERS,
             timeout=_TIMEOUT,
         )
         if resp.ok:
@@ -65,6 +68,7 @@ def get_episodios_agente(agente: str, limit: int = 3) -> list[dict]:
         resp = requests.get(
             f"{VENTAS_API_URL}/api/agentes/memoria/{agente}",
             params={'limit': limit},
+            headers=_HEADERS,
             timeout=_TIMEOUT,
         )
         if resp.ok:
