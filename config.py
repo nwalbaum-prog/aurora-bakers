@@ -55,7 +55,7 @@ SMTP_PASS    = os.environ.get('SMTP_PASS', '')
 CRON_SECRET  = os.environ.get('CRON_SECRET', 'aurora_cron_2024')
 
 # ── Aurora Ventas (fuente única de datos) ────────────────────────────────────
-VENTAS_API_URL = _tunnel_or_local('VENTAS_API_URL', 'https://connect-county-solution-nextel.trycloudflare.com', 'http://127.0.0.1:5000')
+VENTAS_API_URL = _tunnel_or_local('VENTAS_API_URL', 'https://ventas.panypasta.cl', 'http://127.0.0.1:5000')
 VENTAS_API_KEY = os.environ.get('VENTAS_API_KEY', 'aurora_agent_2024')
 
 # ── Hojas CRM ────────────────────────────────────────────────────────────────
