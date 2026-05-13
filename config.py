@@ -26,9 +26,9 @@ WHATSAPP_PHONE_NUMBER_ID = os.environ.get('WHATSAPP_PHONE_NUMBER_ID', '')  # leg
 _ON_RAILWAY = bool(os.environ.get('RAILWAY_ENVIRONMENT') or os.environ.get('RAILWAY_SERVICE_ID'))
 
 def _tunnel_or_local(env_var: str, tunnel_url: str, local_default: str) -> str:
-    """En Railway, usa tunnel_url cuando el env var apunta a localhost."""
+    """En Railway, usa tunnel_url si el env var es localhost o un túnel viejo de trycloudflare."""
     raw = os.environ.get(env_var, '')
-    if _ON_RAILWAY and (not raw or 'localhost' in raw or '127.0.0.1' in raw):
+    if _ON_RAILWAY and (not raw or 'localhost' in raw or '127.0.0.1' in raw or 'trycloudflare.com' in raw):
         return tunnel_url
     return raw or local_default
 
