@@ -118,7 +118,8 @@ def webhook_evolution():
     """
     try:
         data = request.get_json(silent=True) or {}
-        event = data.get('event', '')
+        # Normalizar: Evolution API v1 puede enviar "MESSAGES_UPSERT" o "messages.upsert"
+        event = data.get('event', '').lower().replace('_', '.')
 
         logger.info(f"[evolution] Evento recibido: {event}")
 
