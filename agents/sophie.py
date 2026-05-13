@@ -200,6 +200,7 @@ def _ejecutar_herramienta(user_id: str, tool_call, texto_previo: str, tipo: str)
         nombre_c     = args.get('nombre', '')
         telefono     = args.get('telefono', user_id)
 
+        logger.info(f"[sophie] TOOL registrar_pedido_minorista: {nombre_c} ${total} {dia}")
         try:
             items_str = ', '.join(f"{i.get('cantidad',1)}x {i.get('producto','')}" for i in items)
             fecha     = datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -207,12 +208,16 @@ def _ejecutar_herramienta(user_id: str, tool_call, texto_previo: str, tipo: str)
                 fecha, nombre_c, telefono, items_str, total, dia, tipo_entrega, 'pendiente', 'whatsapp'
             ])
             append_row(config.SHEET_INGRESOS, [fecha, total, f'Pedido {nombre_c}', 'whatsapp'])
-            _sincronizar_venta_aurora(nombre_c, telefono, items, total, dia, tipo_entrega, 'CLIENTE')
-            conversaciones.marcar_pedido_guardado(user_id)
-            logger.info(f"[sophie] Pedido minorista registrado: {nombre_c} ${total}")
         except Exception as e:
-            logger.error(f"[sophie] Error registrando pedido: {e}")
+            logger.warning(f"[sophie] Sheets no disponible: {e}")
 
+        try:
+            _sincronizar_venta_aurora(nombre_c, telefono, items, total, dia, tipo_entrega, 'CLIENTE')
+        except Exception as e:
+            logger.warning(f"[sophie] ventas_aurora error: {e}")
+
+        conversaciones.marcar_pedido_guardado(user_id)
+        logger.info(f"[sophie] Pedido minorista registrado OK: {nombre_c} ${total}")
         return texto_previo or f"✅ ¡Pedido registrado, {nombre_c}! Te esperamos el {dia} 🍞"
 
     if nombre == 'registrar_pedido_mayorista':
@@ -222,6 +227,7 @@ def _ejecutar_herramienta(user_id: str, tool_call, texto_previo: str, tipo: str)
         total     = float(args.get('total', 0))
         dia       = args.get('dia', '')
 
+        logger.info(f"[sophie] TOOL registrar_pedido_mayorista: {empresa} ${total} {dia}")
         try:
             items_str = ', '.join(f"{i.get('cantidad',1)}x {i.get('producto','')}" for i in items)
             fecha     = datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -229,13 +235,17 @@ def _ejecutar_herramienta(user_id: str, tool_call, texto_previo: str, tipo: str)
                 fecha, empresa, rut, items_str, total, dia, 'pendiente'
             ])
             append_row(config.SHEET_INGRESOS, [fecha, total, f'Mayorista {empresa}', 'whatsapp'])
+        except Exception as e:
+            logger.warning(f"[sophie] Sheets no disponible: {e}")
+
+        try:
             _sincronizar_venta_aurora(empresa, rut, items, total, dia, 'despacho', 'HORECA',
                                       notas=f'RUT: {rut}')
-            conversaciones.marcar_pedido_guardado(user_id)
-            logger.info(f"[sophie] Pedido mayorista registrado: {empresa} ${total}")
         except Exception as e:
-            logger.error(f"[sophie] Error registrando mayorista: {e}")
+            logger.warning(f"[sophie] ventas_aurora error: {e}")
 
+        conversaciones.marcar_pedido_guardado(user_id)
+        logger.info(f"[sophie] Pedido mayorista registrado OK: {empresa} ${total}")
         return texto_previo or f"✅ Pedido mayorista de {empresa} registrado. Te enviamos la factura pronto 🍞"
 
     if nombre == 'generar_link_pago':
