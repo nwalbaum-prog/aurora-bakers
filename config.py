@@ -33,7 +33,7 @@ def _tunnel_or_local(env_var: str, tunnel_url: str, local_default: str) -> str:
     return raw or local_default
 
 # ── Evolution API (reemplaza Meta Cloud API) ─────────────────────────────────
-EVOLUTION_API_URL  = _tunnel_or_local('EVOLUTION_API_URL', 'https://bath-wishing-handed-maker.trycloudflare.com', 'http://localhost:8081')
+EVOLUTION_API_URL  = _tunnel_or_local('EVOLUTION_API_URL', 'https://reuters-ada-scroll-habits.trycloudflare.com', 'http://localhost:8081')
 EVOLUTION_API_KEY  = os.environ.get('EVOLUTION_API_KEY', 'aurora_bakers_evolution_2024')
 EVOLUTION_INSTANCE = os.environ.get('EVOLUTION_INSTANCE', 'aurora-bakers')
 
@@ -55,7 +55,7 @@ SMTP_PASS    = os.environ.get('SMTP_PASS', '')
 CRON_SECRET  = os.environ.get('CRON_SECRET', 'aurora_cron_2024')
 
 # ── Aurora Ventas (fuente única de datos) ────────────────────────────────────
-VENTAS_API_URL = _tunnel_or_local('VENTAS_API_URL', 'https://query-touched-process-looksmart.trycloudflare.com', 'http://127.0.0.1:5000')
+VENTAS_API_URL = _tunnel_or_local('VENTAS_API_URL', 'https://land-caution-investigated-april.trycloudflare.com', 'http://127.0.0.1:5000')
 VENTAS_API_KEY = os.environ.get('VENTAS_API_KEY', 'aurora_agent_2024')
 
 # ── Hojas CRM ────────────────────────────────────────────────────────────────
