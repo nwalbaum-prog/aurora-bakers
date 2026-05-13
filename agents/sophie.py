@@ -3,15 +3,13 @@ agents/sophie.py — Sophie: agente de ventas WhatsApp Aurora Bakers
 
 Flujo:
   1. _get_contexto_cliente: obtiene historial del cliente desde aurora-ventas
-  2. ask_sophie: llama Claude con prompt enriquecido
-  3. _extraer_token: parsea token con regex (robusto, busca en cualquier línea)
-  4. _procesar_token: ejecuta la acción del token
-  5. ejecutar_tareas_pendientes: runner de tareas delegadas por el dueño
+  2. ask_sophie: llama Claude con tools (function calling) para acciones estructuradas
+  3. _ejecutar_herramienta: ejecuta la herramienta llamada por Claude
+  4. ejecutar_tareas_pendientes: runner de tareas delegadas por el dueño
 """
 from __future__ import annotations
 import json
 import logging
-import re
 from datetime import datetime
 import anthropic
 from tools.jumpseller import get_catalogo_texto, generar_link_compra
@@ -22,10 +20,74 @@ import config
 
 logger = logging.getLogger(__name__)
 
-_TOKEN_RE = re.compile(
-    r'^(PEDIDO_CONFIRMADO|PEDIDO_MAYORISTA|GENERAR_LINK)\|.+',
-    re.MULTILINE,
-)
+SOPHIE_TOOLS = [
+    {
+        "name": "registrar_pedido_minorista",
+        "description": "Registra un pedido confirmado de cliente minorista. Usar SOLO cuando el cliente ha confirmado explícitamente (dijo sí/ok/dale/listo/perfecto/va).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nombre":       {"type": "string",  "description": "Nombre completo del cliente"},
+                "telefono":     {"type": "string",  "description": "Teléfono del cliente (con código país si está disponible)"},
+                "items": {
+                    "type": "array",
+                    "description": "Lista de productos del pedido",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "producto":  {"type": "string"},
+                            "cantidad":  {"type": "integer"},
+                            "precio":    {"type": "number"}
+                        },
+                        "required": ["producto", "cantidad", "precio"]
+                    }
+                },
+                "total":        {"type": "number", "description": "Total en pesos CLP"},
+                "dia":          {"type": "string", "description": "Día de entrega (ej: viernes, sabado)"},
+                "tipo_entrega": {"type": "string", "enum": ["despacho", "retiro"], "description": "Modalidad de entrega"}
+            },
+            "required": ["nombre", "telefono", "items", "total", "dia", "tipo_entrega"]
+        }
+    },
+    {
+        "name": "registrar_pedido_mayorista",
+        "description": "Registra un pedido de cliente mayorista (empresa, restaurante, café, etc.).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "empresa": {"type": "string"},
+                "rut":     {"type": "string"},
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "producto": {"type": "string"},
+                            "cantidad": {"type": "integer"},
+                            "precio":   {"type": "number"}
+                        },
+                        "required": ["producto", "cantidad", "precio"]
+                    }
+                },
+                "total": {"type": "number"},
+                "dia":   {"type": "string"}
+            },
+            "required": ["empresa", "rut", "items", "total", "dia"]
+        }
+    },
+    {
+        "name": "generar_link_pago",
+        "description": "Genera un link de pago online de Jumpseller para el cliente.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nombre_producto": {"type": "string", "description": "Nombre del producto en catálogo"},
+                "dia_entrega":     {"type": "string", "description": "Día de entrega solicitado"}
+            },
+            "required": ["nombre_producto", "dia_entrega"]
+        }
+    }
+]
 
 SOPHIE_SYSTEM = """Eres Sophie, la cara de Aurora Bakers (panypasta.cl) en WhatsApp.
 Aurora Bakers es una panadería artesanal de Santiago que hace panes de masa madre.
@@ -52,32 +114,13 @@ REGLAS:
 
 FLUJO DE PEDIDO (seguir este orden):
 1. Entiende qué quieren y para qué día.
-2. Reúne: nombre del cliente, productos+cantidades, día de despacho, teléfono.
-3. Resume el pedido y confirma: "¿Quedamos así? [resumen breve]"
-4. Cuando el cliente dice sí/ok/dale/listo/perfecto/claro/va → DEBES emitir el TOKEN correspondiente en una línea propia, solo él, sin texto adicional en esa línea.
-5. Después del token: mensaje de cierre amigable con día de entrega.
-
-⚠️ CRÍTICO — TOKENS OBLIGATORIOS:
-El token ES la acción. Si no emites el token, el pedido NO se registra, el link NO se genera.
-Sin token = nada pasa. SIEMPRE emite el token cuando corresponde.
+2. Reúne: nombre, productos+cantidades, día, teléfono.
+3. Resume el pedido y confirma: "¿Quedamos así? [resumen]"
+4. Cuando el cliente confirma (sí/ok/dale/perfecto) → llama la herramienta correspondiente para registrar.
+5. Después de llamar la herramienta: cierra con mensaje amigable.
 
 PRECIOS MAYORISTAS (solo si es cliente mayorista):
 {precios_mayoristas}
-
-TOKENS (exactamente en este formato, en su propia línea):
-PEDIDO_CONFIRMADO|nombre|[{{"producto":"X","cantidad":1,"precio":N}}]|total|dia|tipo_entrega|telefono
-PEDIDO_MAYORISTA|empresa|rut|[{{"producto":"X","cantidad":1,"precio":N}}]|total|dia
-GENERAR_LINK|nombre_producto|dia_entrega
-
-Ejemplo correcto (pedido minorista):
-Cliente confirmó. Tu respuesta debe ser:
-Perfecto [nombre], queda todo registrado 🍞 Te esperamos el [día].
-PEDIDO_CONFIRMADO|Maria|[{{"producto":"Pan Molde Integral","cantidad":2,"precio":4200}}]|8400|viernes|despacho|56911111111
-
-Ejemplo correcto (link de pago):
-Cliente pidió link. Tu respuesta debe ser:
-¡Aquí va tu link! Paga y coordinamos el despacho 🔗
-GENERAR_LINK|Pan Molde Integral|viernes
 
 {memoria}
 """
@@ -91,9 +134,9 @@ def ask_sophie(user_id: str, mensaje: str, canal: str = 'whatsapp') -> str:
     conversaciones.append_mensaje(user_id, 'user', mensaje)
 
     try:
-        catalogo          = _get_catalogo_con_fallback()
-        memoria           = get_contexto_memoria('sophie', limit=2)
-        contexto_cliente  = _get_contexto_cliente(user_id)
+        catalogo           = _get_catalogo_con_fallback()
+        memoria            = get_contexto_memoria('sophie', limit=2)
+        contexto_cliente   = _get_contexto_cliente(user_id)
         precios_mayoristas = _formato_precios_mayoristas()
 
         system = SOPHIE_SYSTEM.format(
@@ -103,21 +146,30 @@ def ask_sophie(user_id: str, mensaje: str, canal: str = 'whatsapp') -> str:
             precios_mayoristas=precios_mayoristas,
         )
 
-        mensajes = conversaciones.get_mensajes(user_id)
+        mensajes   = conversaciones.get_mensajes(user_id)
         cliente_ai = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
         resp = cliente_ai.messages.create(
             model=config.MODEL,
             max_tokens=600,
             system=system,
             messages=mensajes,
+            tools=SOPHIE_TOOLS,
+            tool_choice={"type": "auto"},
         )
-        respuesta_raw = resp.content[0].text
 
-        token_line, respuesta_limpia = _extraer_token(respuesta_raw)
+        # Extraer texto y/o tool call del response
+        respuesta_texto = ''
+        tool_call = None
+        for block in resp.content:
+            if block.type == 'text':
+                respuesta_texto += block.text
+            elif block.type == 'tool_use':
+                tool_call = block
 
-        if token_line:
-            respuesta_limpia = _procesar_token(user_id, token_line, respuesta_limpia, tipo)
+        if tool_call:
+            respuesta_texto = _ejecutar_herramienta(user_id, tool_call, respuesta_texto.strip(), tipo)
 
+        respuesta_limpia = respuesta_texto.strip()
         conversaciones.append_mensaje(user_id, 'assistant', respuesta_limpia)
         guardar_episodio(
             agente='sophie',
@@ -130,6 +182,72 @@ def ask_sophie(user_id: str, mensaje: str, canal: str = 'whatsapp') -> str:
     except Exception as e:
         logger.error(f"[sophie] Error: {e}")
         return "Lo siento, tuve un problema técnico. ¿Puedes repetir? 🙏"
+
+
+# ── Ejecutor de herramientas ──────────────────────────────────────────────────
+
+def _ejecutar_herramienta(user_id: str, tool_call, texto_previo: str, tipo: str) -> str:
+    """Ejecuta la herramienta llamada por Claude y retorna mensaje de cierre."""
+    nombre = tool_call.name
+    args   = tool_call.input
+    logger.info(f"[sophie] Tool call: {nombre} args={json.dumps(args, ensure_ascii=False)[:200]}")
+
+    if nombre == 'registrar_pedido_minorista':
+        items        = args.get('items', [])
+        total        = float(args.get('total', 0))
+        dia          = args.get('dia', '')
+        tipo_entrega = args.get('tipo_entrega', 'despacho')
+        nombre_c     = args.get('nombre', '')
+        telefono     = args.get('telefono', user_id)
+
+        try:
+            items_str = ', '.join(f"{i.get('cantidad',1)}x {i.get('producto','')}" for i in items)
+            fecha     = datetime.now().strftime('%Y-%m-%d %H:%M')
+            append_row(config.SHEET_PEDIDOS, [
+                fecha, nombre_c, telefono, items_str, total, dia, tipo_entrega, 'pendiente', 'whatsapp'
+            ])
+            append_row(config.SHEET_INGRESOS, [fecha, total, f'Pedido {nombre_c}', 'whatsapp'])
+            _sincronizar_venta_aurora(nombre_c, telefono, items, total, dia, tipo_entrega, 'CLIENTE')
+            conversaciones.marcar_pedido_guardado(user_id)
+            logger.info(f"[sophie] Pedido minorista registrado: {nombre_c} ${total}")
+        except Exception as e:
+            logger.error(f"[sophie] Error registrando pedido: {e}")
+
+        return texto_previo or f"✅ ¡Pedido registrado, {nombre_c}! Te esperamos el {dia} 🍞"
+
+    if nombre == 'registrar_pedido_mayorista':
+        empresa   = args.get('empresa', '')
+        rut       = args.get('rut', '')
+        items     = args.get('items', [])
+        total     = float(args.get('total', 0))
+        dia       = args.get('dia', '')
+
+        try:
+            items_str = ', '.join(f"{i.get('cantidad',1)}x {i.get('producto','')}" for i in items)
+            fecha     = datetime.now().strftime('%Y-%m-%d %H:%M')
+            append_row(config.SHEET_PEDIDOS_MAYORISTAS, [
+                fecha, empresa, rut, items_str, total, dia, 'pendiente'
+            ])
+            append_row(config.SHEET_INGRESOS, [fecha, total, f'Mayorista {empresa}', 'whatsapp'])
+            _sincronizar_venta_aurora(empresa, rut, items, total, dia, 'despacho', 'HORECA',
+                                      notas=f'RUT: {rut}')
+            conversaciones.marcar_pedido_guardado(user_id)
+            logger.info(f"[sophie] Pedido mayorista registrado: {empresa} ${total}")
+        except Exception as e:
+            logger.error(f"[sophie] Error registrando mayorista: {e}")
+
+        return texto_previo or f"✅ Pedido mayorista de {empresa} registrado. Te enviamos la factura pronto 🍞"
+
+    if nombre == 'generar_link_pago':
+        nombre_prod = args.get('nombre_producto', '')
+        dia_entrega = args.get('dia_entrega', '')
+        link = generar_link_compra(nombre_prod, dia_entrega)
+        if link:
+            cierre = texto_previo or '¡Aquí va tu link de pago! 🔗'
+            return f"{cierre}\n\n🔗 {link}".strip()
+        return texto_previo or "Tenemos un problema con el link en este momento. ¿Te lo coordino por otro medio?"
+
+    return texto_previo
 
 
 # ── Helpers de contexto ───────────────────────────────────────────────────────
@@ -181,102 +299,6 @@ def _get_catalogo_con_fallback() -> str:
     for codigo, r in config.RECETAS.items():
         lineas.append(f"✅ {r['nombre']}")
     return '\n'.join(lineas)
-
-
-# ── Token parser ──────────────────────────────────────────────────────────────
-
-def _extraer_token(respuesta: str) -> tuple[str, str]:
-    """
-    Busca un token estructurado en cualquier línea del response.
-    Retorna (token_line, texto_limpio).
-    """
-    match = _TOKEN_RE.search(respuesta)
-    if not match:
-        return '', respuesta
-    token_line    = match.group(0)
-    texto_antes   = respuesta[:match.start()].strip()
-    texto_despues = respuesta[match.end():].strip()
-    texto_limpio  = '\n'.join(filter(None, [texto_antes, texto_despues]))
-    return token_line, texto_limpio
-
-
-def _procesar_token(user_id: str, token_line: str, texto: str, tipo: str) -> str:
-    """Despacha el token al handler correcto."""
-    if token_line.startswith('PEDIDO_CONFIRMADO|'):
-        _manejar_pedido_confirmado(user_id, token_line)
-        return texto or "✅ ¡Pedido registrado! Nos vemos el día de entrega 🍞"
-
-    if token_line.startswith('GENERAR_LINK|'):
-        partes = token_line.split('|')
-        if len(partes) >= 3:
-            link = generar_link_compra(partes[1].strip(), partes[2].strip())
-            if link:
-                return f"{texto}\n\n🔗 {link}".strip()
-        return texto
-
-    if token_line.startswith('PEDIDO_MAYORISTA|'):
-        _manejar_pedido_mayorista(user_id, token_line)
-        return texto or "✅ Pedido mayorista registrado. Te enviamos la factura pronto 🍞"
-
-    return texto
-
-
-# ── Handlers de pedidos ───────────────────────────────────────────────────────
-
-def _manejar_pedido_confirmado(user_id: str, token: str) -> None:
-    """Guarda pedido minorista en Sheets y aurora-ventas."""
-    try:
-        partes = token.split('|')
-        if len(partes) < 7:
-            return
-        nombre       = partes[1].strip()
-        items_raw    = partes[2].strip()
-        total        = _parse_monto(partes[3])
-        dia          = partes[4].strip()
-        tipo_entrega = partes[5].strip()
-        telefono     = partes[6].strip() if len(partes) > 6 else user_id
-
-        items     = json.loads(items_raw) if items_raw.startswith('[') else []
-        items_str = ', '.join(f"{i.get('cantidad',1)}x {i.get('producto','')}" for i in items)
-        fecha     = datetime.now().strftime('%Y-%m-%d %H:%M')
-
-        append_row(config.SHEET_PEDIDOS, [
-            fecha, nombre, telefono, items_str, total, dia, tipo_entrega, 'pendiente', 'whatsapp'
-        ])
-        append_row(config.SHEET_INGRESOS, [fecha, total, f'Pedido {nombre}', 'whatsapp'])
-        _sincronizar_venta_aurora(nombre, telefono, items, total, dia, tipo_entrega, 'CLIENTE')
-        conversaciones.marcar_pedido_guardado(user_id)
-        logger.info(f"[sophie] Pedido confirmado: {nombre} ${total}")
-    except Exception as e:
-        logger.error(f"[sophie] Error guardando pedido confirmado: {e}")
-
-
-def _manejar_pedido_mayorista(user_id: str, token: str) -> None:
-    """Guarda pedido mayorista en Sheets y aurora-ventas."""
-    try:
-        partes    = token.split('|')
-        if len(partes) < 5:
-            return
-        empresa   = partes[1].strip()
-        rut       = partes[2].strip()
-        items_raw = partes[3].strip()
-        total     = _parse_monto(partes[4])
-        dia       = partes[5].strip() if len(partes) > 5 else ''
-
-        items     = json.loads(items_raw) if items_raw.startswith('[') else []
-        items_str = ', '.join(f"{i.get('cantidad',1)}x {i.get('producto','')}" for i in items)
-        fecha     = datetime.now().strftime('%Y-%m-%d %H:%M')
-
-        append_row(config.SHEET_PEDIDOS_MAYORISTAS, [
-            fecha, empresa, rut, items_str, total, dia, 'pendiente'
-        ])
-        append_row(config.SHEET_INGRESOS, [fecha, total, f'Mayorista {empresa}', 'whatsapp'])
-        _sincronizar_venta_aurora(empresa, rut, items, total, dia, 'despacho', 'HORECA',
-                                   notas=f'RUT: {rut}')
-        conversaciones.marcar_pedido_guardado(user_id)
-        logger.info(f"[sophie] Pedido mayorista: {empresa} ${total}")
-    except Exception as e:
-        logger.error(f"[sophie] Error guardando pedido mayorista: {e}")
 
 
 # ── Task runner ───────────────────────────────────────────────────────────────
@@ -369,7 +391,6 @@ def _sincronizar_venta_aurora(
             if r.ok:
                 cliente_id = r.json().get('id')
 
-        # Crear venta (items como notas — WhatsApp orders no tienen producto_id)
         items_str = ', '.join(
             f"{i.get('cantidad',1)}x {i.get('producto','')}" for i in items
         ) or 'Pedido WhatsApp'
@@ -384,7 +405,7 @@ def _sincronizar_venta_aurora(
             'tipo_cliente':    segmento,
             'estado_pago':     'PENDIENTE',
             'estado_despacho': 'PENDIENTE',
-            'items':           [],  # sin FK de producto — solo notas
+            'items':           [],
         }
         r = _req.post(
             f"{VENTAS_API_URL}/api/ventas",
@@ -406,14 +427,6 @@ def _detectar_tipo(mensaje: str) -> str:
     señales = ['rut', 'restaurante', 'café', 'cafe', 'local', 'negocio',
                'empresa', 'factura', 'mayorista', 'pedido grande']
     return 'mayorista' if any(s in msg_lower for s in señales) else 'minorista'
-
-
-def _parse_monto(valor: str) -> float:
-    try:
-        limpio = str(valor).replace('$', '').replace('.', '').replace(',', '.').strip()
-        return float(limpio)
-    except (ValueError, AttributeError):
-        return 0.0
 
 
 def _formato_precios_mayoristas() -> str:
