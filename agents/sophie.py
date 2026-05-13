@@ -415,10 +415,9 @@ def _sincronizar_venta_aurora(
             'tipo_cliente':    segmento,
             'estado_pago':     'PENDIENTE',
             'estado_despacho': 'PENDIENTE',
-            'items':           [],
         }
         r = _req.post(
-            f"{VENTAS_API_URL}/api/ventas",
+            f"{VENTAS_API_URL}/api/agentes/ventas",
             json=venta_body, headers=headers, timeout=8,
         )
         if r.ok:
