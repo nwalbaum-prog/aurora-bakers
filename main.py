@@ -93,12 +93,13 @@ def jinja_enumerate(iterable):
 
 @app.route('/health')
 def health():
-    from tools.ventas_api import get_resumen
+    from tools.ventas_api import get_resumen, VENTAS_API_URL as _vurl
     ventas_ok = get_resumen() is not None
     return jsonify({
         'status': 'ok',
         'ts': datetime.now().isoformat(),
         'ventas_api': ventas_ok,
+        'ventas_url': _vurl,
         'cron': get_proxima_ejecucion(),
     })
 
