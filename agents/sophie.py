@@ -13,6 +13,7 @@ import logging
 from datetime import datetime
 import anthropic
 from tools.jumpseller import get_catalogo_texto, generar_link_compra
+from tools.info_web import get_info_web
 from tools.sheets import append_row
 from memoria.contexto import conversaciones
 from memoria.episodica import guardar_episodio, get_contexto_memoria
@@ -101,6 +102,8 @@ CONTEXTO DEL CLIENTE:
 
 CATÁLOGO ACTUAL:
 {catalogo}
+INFO SITIO WEB (panypasta.cl):
+{info_web}
 
 DÍAS DE DESPACHO: martes, miércoles, jueves, viernes y sábado.
 COMUNAS CON DESPACHO: Providencia, Ñuñoa, Santiago Centro, Recoleta, Independencia, Las Condes, Vitacura, La Reina, Macul, San Miguel.
@@ -135,6 +138,7 @@ def ask_sophie(user_id: str, mensaje: str, canal: str = 'whatsapp') -> str:
 
     try:
         catalogo           = _get_catalogo_con_fallback()
+        info_web           = get_info_web()
         memoria            = get_contexto_memoria('sophie', limit=2)
         contexto_cliente   = _get_contexto_cliente(user_id)
         precios_mayoristas = _formato_precios_mayoristas()
@@ -144,6 +148,7 @@ def ask_sophie(user_id: str, mensaje: str, canal: str = 'whatsapp') -> str:
             memoria=memoria,
             contexto_cliente=contexto_cliente,
             precios_mayoristas=precios_mayoristas,
+            info_web=info_web,
         )
 
         mensajes   = conversaciones.get_mensajes(user_id)
