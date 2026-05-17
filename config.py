@@ -33,7 +33,7 @@ def _tunnel_or_local(env_var: str, tunnel_url: str, local_default: str) -> str:
     return raw or local_default
 
 # ── Evolution API (reemplaza Meta Cloud API) ─────────────────────────────────
-EVOLUTION_API_URL  = _tunnel_or_local('EVOLUTION_API_URL', 'http://localhost:8081')
+EVOLUTION_API_URL  = os.environ.get('EVOLUTION_API_URL', 'http://localhost:8081')
 EVOLUTION_API_URL  = os.environ.get('EVOLUTION_API_URL', 'http://localhost:8081')
 EVOLUTION_INSTANCE = os.environ.get('EVOLUTION_INSTANCE', 'aurora-bakers')
 
