@@ -200,7 +200,7 @@ def webhook_evolution():
                 logger.info(f"[evolution] LID {from_} → {phone}")
             else:
                 logger.warning(f"[evolution] LID desconocido {from_} (pushName={msg_data.get('pushName','?')}) — sin mapeo")
-                return jsonify({'status': 'unknown_lid', 'lid': from_}), 200
+                phone = remote_jid  # LID sin mapeo: usar JID completo
         else:
             phone = from_  # JID normal @s.whatsapp.net
 
