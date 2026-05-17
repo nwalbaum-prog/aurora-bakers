@@ -34,7 +34,7 @@ def _tunnel_or_local(env_var: str, tunnel_url: str, local_default: str) -> str:
 
 # ── Evolution API (reemplaza Meta Cloud API) ─────────────────────────────────
 EVOLUTION_API_URL  = os.environ.get('EVOLUTION_API_URL', 'http://localhost:8081')
-EVOLUTION_API_URL  = os.environ.get('EVOLUTION_API_URL', 'http://localhost:8081')
+EVOLUTION_API_KEY  = os.environ.get('EVOLUTION_API_KEY', 'aurora_bakers_evolution_2024')
 EVOLUTION_INSTANCE = os.environ.get('EVOLUTION_INSTANCE', 'aurora-bakers')
 
 # Mapeo LID → número de teléfono (WhatsApp multi-device)
